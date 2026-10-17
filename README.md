@@ -7,11 +7,11 @@ A GNSS survey, path recording, distance measurement and path-following app for A
 1. **Path** – record a track
    - Continuous background GNSS logging via an Android `ForegroundService` (keeps recording with the screen locked).
    - Live cumulative distance (m / km), logged point counter, elevation, and ground speed (km/h).
-   - Selectable **Accuracy Gate** (`≤0.5m RTK`, `≤2.0m`, or `All`) to reject multipath outliers.
+   - Selectable **Accuracy Gate** (`≤0.5m RTK`, `≤2.0m`, or `All`) in Settings to reject multipath outliers.
    - **Undo Last Point**, **Pause/Resume**, and direct `.geojson` saving or sharing.
 
 2. **Measure** – straight line distance between two points
-   - Capture **Point A** and **Point B**, each averaged over 4 or 10 stationary epochs, with horizontal spread (`±m`) reported.
+   - Capture **Point A** and **Point B**, each averaged over 4 or 10 stationary epochs (set in Settings), with horizontal spread (`±m`) reported.
    - Reports **horizontal distance**, **slope distance**, **height difference (Δh)** and **true bearing** A → B.
    - Live distance from Point A to your current position.
 
@@ -31,7 +31,8 @@ A GNSS survey, path recording, distance measurement and path-following app for A
 
 5. **Field & Map Utilities**
    - **GNSS status badge:** `EXT` for external (mock) receiver coordinates or `GPS` for the phone's own GPS, with horizontal accuracy, coloured green (RTK) / blue (sub-metre) / orange / red.
-   - **☰ Menu:** load or remove a GeoJSON overlay, dark/light theme toggle, and map layer selection.
+   - **Map-first layout:** the map fills the screen; each mode has a compact two-row control panel above the mode tabs at the bottom. Save / Share / Clear live behind a single save button.
+   - **☰ Menu:** load or remove a GeoJSON overlay, and **Settings** (dark/light theme, path accuracy gate, measure averaging epochs, map layer).
    - **Map layers:** Dark (CARTO Dark Matter, default), Streets (CARTO Voyager), Satellite (Esri World Imagery), Topographic (OpenTopoMap) and OpenStreetMap. Also selectable from the layers button on the map.
    - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and layer picker.
 

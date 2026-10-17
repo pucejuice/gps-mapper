@@ -10,14 +10,14 @@ import android.location.Location
 import android.os.Build
 import android.view.WindowManager
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -139,220 +140,183 @@ private fun formatDistance(m: Double): String =
 fun FollowPanel(
     overlay: ImportedGeoJsonOverlay?,
     followSession: FollowSession?,
-    currentLocation: Location?
+    currentLocation: Location?,
+    onLoadGeoJson: () -> Unit
 ) {
     val magneticAzimuth by rememberCompassAzimuth()
-    var selectedLine by remember(overlay) { mutableStateOf(0) }
+    var selectedLine by remember(overlay) { mutableStateOf(overlay?.lines?.indexOfFirst { it.points.size >= 2 }?.coerceAtLeast(0) ?: 0) }
     var reversed by remember(overlay) { mutableStateOf(false) }
+    var showLines by remember { mutableStateOf(false) }
 
-    val lines = overlay?.lines.orEmpty().filter { it.points.size >= 2 }
     val lineLengths = remember(overlay) {
         overlay?.lines.orEmpty().map { PathFollower(it.points).totalMeters }
     }
+    val hasLines = overlay?.lines.orEmpty().any { it.points.size >= 2 }
 
-    LazyColumn(
+    Column(
         modifier = Modifier
-            .fillMaxSize()
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        if (lines.isEmpty()) {
-            item {
-                Column {
-                    Text("Follow a Path", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Load a .geojson containing a LineString (or polygon) with the folder button at the top, " +
-                            "then come back here to get a direction arrow guiding you along it.",
-                        fontSize = 13.sp
-                    )
+        if (!hasLines) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    "Load a .geojson with a line to follow.",
+                    fontSize = 13.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                Button(onClick = onLoadGeoJson) {
+                    Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Load", maxLines = 1)
                 }
             }
-            return@LazyColumn
+            return@Column
         }
 
         if (followSession == null) {
-            item { Text("Follow a Path", fontWeight = FontWeight.Bold, fontSize = 15.sp) }
-
-            // Line selector (only relevant when the file holds several lines)
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    overlay?.lines?.forEachIndexed { index, line ->
-                        if (line.points.size >= 2) {
-                            FilterChip(
-                                selected = selectedLine == index,
-                                onClick = { selectedLine = index },
-                                label = {
-                                    Text(
-                                        "${line.name} (${formatDistance(lineLengths.getOrElse(index) { 0.0 })})",
-                                        fontSize = 11.sp
-                                    )
-                                }
-                            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Line picker
+                Box(modifier = Modifier.weight(1f)) {
+                    val line = overlay?.lines?.getOrNull(selectedLine)
+                    OutlinedButton(
+                        onClick = { showLines = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "${line?.name ?: "Line"} · ${formatDistance(lineLengths.getOrElse(selectedLine) { 0.0 })}",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                    DropdownMenu(expanded = showLines, onDismissRequest = { showLines = false }) {
+                        overlay?.lines?.forEachIndexed { index, l ->
+                            if (l.points.size >= 2) {
+                                DropdownMenuItem(
+                                    text = { Text("${l.name} (${formatDistance(lineLengths.getOrElse(index) { 0.0 })})") },
+                                    onClick = { selectedLine = index; showLines = false }
+                                )
+                            }
                         }
                     }
                 }
-            }
-
-            item {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                // Direction toggle
+                FilledTonalButton(
+                    onClick = { reversed = !reversed },
+                    contentPadding = PaddingValues(horizontal = 8.dp)
                 ) {
-                    Text("Direction:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                    FilterChip(selected = !reversed, onClick = { reversed = false }, label = { Text("Start → End", fontSize = 11.sp) })
-                    FilterChip(selected = reversed, onClick = { reversed = true }, label = { Text("End → Start", fontSize = 11.sp) })
+                    Icon(Icons.Default.SwapHoriz, contentDescription = "Swap direction", modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(2.dp))
+                    Text(if (reversed) "E→S" else "S→E", maxLines = 1, softWrap = false)
                 }
-            }
-
-            item {
-                val validIndex = overlay?.lines?.getOrNull(selectedLine)?.points?.size?.let { it >= 2 } == true
                 Button(
                     onClick = { SurveyRepository.startFollowing(selectedLine, reversed) },
-                    enabled = validIndex,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100)),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100), contentColor = Color.White),
+                    contentPadding = PaddingValues(horizontal = 10.dp)
                 ) {
-                    Icon(Icons.Default.Navigation, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Start Following")
+                    Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Go", maxLines = 1, softWrap = false)
                 }
             }
-            return@LazyColumn
+            return@Column
         }
 
         val guidance = followSession.guidance
         val heading = resolveTrueHeading(currentLocation, magneticAzimuth)
 
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                when {
-                    guidance == null -> {
-                        Text("Waiting for GNSS fix…", fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    }
-                    guidance.arrived -> {
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = Color(0xFF2E7D32),
-                            modifier = Modifier.size(110.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            when {
+                guidance == null -> {
+                    Text("Waiting for GNSS fix…", fontSize = 14.sp, modifier = Modifier.weight(1f))
+                }
+                guidance.arrived -> {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = Color(0xFF2E7D32),
+                        modifier = Modifier.size(64.dp)
+                    )
+                    Text(
+                        "End of path reached",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                else -> {
+                    val relative = heading?.let { GeoMath.angleDiff(it.first, guidance.bearingToTargetDegrees) }
+                    val onCourse = relative != null && abs(relative) < 20
+                    DirectionArrow(
+                        rotationDegrees = (relative ?: guidance.bearingToTargetDegrees).toFloat(),
+                        color = if (onCourse) Color(0xFF43A047) else Color(0xFFFB8C00),
+                        size = 76.dp
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        val instruction = when {
+                            relative == null -> "Head ${"%.0f".format(guidance.bearingToTargetDegrees)}° true"
+                            abs(relative) < 15 -> "Straight ahead"
+                            abs(relative) < 60 -> if (relative > 0) "Bear right" else "Bear left"
+                            abs(relative) < 140 -> if (relative > 0) "Turn right" else "Turn left"
+                            else -> "Turn around"
+                        }
+                        Text(instruction, fontWeight = FontWeight.Bold, fontSize = 18.sp, maxLines = 1)
+                        val off = guidance.crossTrackMeters
+                        val offText = when {
+                            abs(off) < 2.0 -> "On path"
+                            off > 0 -> "${formatDistance(abs(off))} right of path"
+                            else -> "${formatDistance(abs(off))} left of path"
+                        }
+                        Text(
+                            "$offText · ${formatDistance(guidance.remainingMeters)} to go",
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            "You've reached the end of the path",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    else -> {
-                        val relative = heading?.let { GeoMath.angleDiff(it.first, guidance.bearingToTargetDegrees) }
-                        val onCourse = relative != null && abs(relative) < 20
-                        DirectionArrow(
-                            rotationDegrees = (relative ?: guidance.bearingToTargetDegrees).toFloat(),
-                            color = if (onCourse) Color(0xFF2E7D32) else Color(0xFFE65100),
-                            size = 130.dp
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            val instruction = when {
-                                relative == null -> "Head ${"%.0f".format(guidance.bearingToTargetDegrees)}° (true)"
-                                abs(relative) < 15 -> "Straight ahead"
-                                abs(relative) < 60 -> if (relative > 0) "Bear right" else "Bear left"
-                                abs(relative) < 140 -> if (relative > 0) "Turn right" else "Turn left"
-                                else -> "Turn around"
-                            }
-                            Text(instruction, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                            val off = guidance.crossTrackMeters
-                            val offText = when {
-                                abs(off) < 2.0 -> "On path"
-                                off > 0 -> "${formatDistance(abs(off))} right of path"
-                                else -> "${formatDistance(abs(off))} left of path"
-                            }
-                            Text(offText, fontSize = 13.sp)
-                            Text(
-                                if (heading != null) "Heading source: ${heading.second}"
-                                else "No compass: arrow is north-up",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        if (guidance != null) {
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Remaining", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                                Text(formatDistance(guidance.remainingMeters), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Covered", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                                Text(formatDistance(guidance.distanceAlongMeters), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Path Total", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
-                                Text(formatDistance(guidance.totalMeters), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = guidance.progress.toFloat(),
-                            modifier = Modifier.fillMaxWidth()
+                            heading?.second ?: "No compass: north-up",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.outline
                         )
                     }
                 }
             }
-        }
-
-        item {
-            val lineName = overlay?.lines?.getOrNull(followSession.lineIndex)?.name ?: "Path"
-            Text(
-                "Following: $lineName (${if (followSession.reversed) "End → Start" else "Start → End"})",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.outline
-            )
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                FilledTonalIconButton(
                     onClick = { SurveyRepository.startFollowing(followSession.lineIndex, !followSession.reversed) },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.size(40.dp)
                 ) {
-                    Text("Reverse")
+                    Icon(Icons.Default.SwapHoriz, contentDescription = "Reverse direction")
                 }
-                Button(
+                FilledIconButton(
                     onClick = { SurveyRepository.stopFollowing() },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
-                    modifier = Modifier.weight(1f)
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFC62828), contentColor = Color.White),
+                    modifier = Modifier.size(40.dp)
                 ) {
-                    Icon(Icons.Default.Stop, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Stop")
+                    Icon(Icons.Default.Stop, contentDescription = "Stop following")
                 }
             }
+        }
+        if (guidance != null) {
+            LinearProgressIndicator(
+                progress = guidance.progress.toFloat(),
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
