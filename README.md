@@ -30,9 +30,10 @@ A GNSS survey, path recording, distance measurement and path-following app for A
    - Handles out-and-back and looping routes by keeping track of progress along the path.
 
 5. **Field & Map Utilities**
-   - **Mock GNSS Source Verification:** top-bar badge shows `EXT GNSS` (teal) for external mock coordinates or `PHONE GPS` (orange) if the external receiver disconnects.
-   - **GeoJSON Overlay Import** for reference in the field.
-   - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and switch between OpenStreetMap and OpenTopo layers.
+   - **GNSS status badge:** `EXT` for external (mock) receiver coordinates or `GPS` for the phone's own GPS, with horizontal accuracy, coloured green (RTK) / blue (sub-metre) / orange / red.
+   - **☰ Menu:** load or remove a GeoJSON overlay, dark/light theme toggle, and map layer selection.
+   - **Map layers:** Dark (CARTO Dark Matter, default), Streets (CARTO Voyager), Satellite (Esri World Imagery), Topographic (OpenTopoMap) and OpenStreetMap. Also selectable from the layers button on the map.
+   - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and layer picker.
 
 ## Build
 

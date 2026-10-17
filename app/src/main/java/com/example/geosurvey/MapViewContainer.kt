@@ -11,8 +11,12 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.runtime.*
@@ -22,10 +26,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.tileprovider.modules.SqlTileWriter
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 import org.osmdroid.views.overlay.Polyline
@@ -38,29 +43,45 @@ fun OsmMapView(
     measurePoints: Map<MeasureSlot, MeasurePoint>,
     featurePoints: List<SurveyFeaturePoint>,
     importedOverlay: ImportedGeoJsonOverlay?,
-    followSession: FollowSession?
+    followSession: FollowSession?,
+    mapStyle: MapStyle,
+    onMapStyleChange: (MapStyle) -> Unit
 ) {
     val context = LocalContext.current
-    var useTopoTiles by remember { mutableStateOf(false) }
     var hasAutoCentered by remember { mutableStateOf(false) }
+    var showLayerMenu by remember { mutableStateOf(false) }
 
     val mapView = remember {
         val prefs = context.getSharedPreferences("osmdroid", Context.MODE_PRIVATE)
         Configuration.getInstance().load(context, prefs)
-        // Mandatory User-Agent to prevent HTTP 403 on OSM tile servers
-        Configuration.getInstance().userAgentValue = context.packageName
+        // Tile servers (OSM in particular) reject generic/example User-Agents with HTTP 403
+        Configuration.getInstance().userAgentValue =
+            "GeoSurveyGNSS/${BuildConfig.VERSION_NAME} (Android; +https://github.com/pucejuice/gps-mapper)"
+
+        // One-off purge of "Access blocked" tiles cached while the old User-Agent was in use
+        if (!prefs.getBoolean("purged_blocked_tiles_v1", false)) {
+            try {
+                SqlTileWriter().apply {
+                    purgeCache("Mapnik")
+                    purgeCache("OpenTopoMap")
+                    onDetach()
+                }
+            } catch (e: Exception) {
+                // Cache may not exist yet
+            }
+            prefs.edit().putBoolean("purged_blocked_tiles_v1", true).apply()
+        }
 
         MapView(context).apply {
-            setTileSource(TileSourceFactory.MAPNIK)
+            setTileSource(mapStyle.tileSource())
             setMultiTouchControls(true)
+            maxZoomLevel = 21.0
             controller.setZoom(19.0)
         }
     }
 
-    LaunchedEffect(useTopoTiles) {
-        mapView.setTileSource(
-            if (useTopoTiles) TileSourceFactory.OpenTopo else TileSourceFactory.MAPNIK
-        )
+    LaunchedEffect(mapStyle) {
+        mapView.setTileSource(mapStyle.tileSource())
         mapView.invalidate()
     }
 
@@ -198,6 +219,9 @@ fun OsmMapView(
             }
         }
 
+        // Tile provider attribution (required by the tile licences)
+        mapView.overlays.add(CopyrightOverlay(context))
+
         mapView.invalidate()
     }
 
@@ -248,13 +272,27 @@ fun OsmMapView(
                 Icon(Icons.Default.FitScreen, contentDescription = "Fit to Survey Bounds")
             }
 
-            // Toggle OSM / Topo Map Layer
-            SmallFloatingActionButton(
-                onClick = { useTopoTiles = !useTopoTiles },
-                containerColor = MaterialTheme.colorScheme.surface,
-                elevation = FloatingActionButtonDefaults.elevation(4.dp)
-            ) {
-                Icon(Icons.Default.Layers, contentDescription = "Switch Map Layer")
+            // Map Layer Picker
+            Box {
+                SmallFloatingActionButton(
+                    onClick = { showLayerMenu = true },
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    elevation = FloatingActionButtonDefaults.elevation(4.dp)
+                ) {
+                    Icon(Icons.Default.Layers, contentDescription = "Switch Map Layer")
+                }
+                DropdownMenu(expanded = showLayerMenu, onDismissRequest = { showLayerMenu = false }) {
+                    MapStyle.values().forEach { style ->
+                        DropdownMenuItem(
+                            text = { Text(style.label) },
+                            leadingIcon = { RadioButton(selected = style == mapStyle, onClick = null) },
+                            onClick = {
+                                onMapStyleChange(style)
+                                showLayerMenu = false
+                            }
+                        )
+                    }
+                }
             }
         }
     }

@@ -25,11 +25,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -69,9 +73,30 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val settings = getSharedPreferences("geosurvey_settings", MODE_PRIVATE)
         setContent {
-            MaterialTheme {
+            var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", true)) }
+            var mapStyle by remember {
+                mutableStateOf(MapStyle.fromName(settings.getString("map_style", null), darkTheme))
+            }
+            MaterialTheme(colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()) {
                 MainScreen(
+                    darkTheme = darkTheme,
+                    onDarkThemeChange = { dark ->
+                        darkTheme = dark
+                        // Swap the matching basemap along with the theme
+                        if (mapStyle == MapStyle.DARK && !dark) mapStyle = MapStyle.STREETS
+                        if (mapStyle == MapStyle.STREETS && dark) mapStyle = MapStyle.DARK
+                        settings.edit()
+                            .putBoolean("dark_theme", dark)
+                            .putString("map_style", mapStyle.name)
+                            .apply()
+                    },
+                    mapStyle = mapStyle,
+                    onMapStyleChange = { style ->
+                        mapStyle = style
+                        settings.edit().putString("map_style", style.name).apply()
+                    },
                     onStartService = { startTrackingService() },
                     onSaveGeoJson = { json, fileName ->
                         pendingGeoJsonToSave = json
@@ -108,6 +133,10 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
+    darkTheme: Boolean,
+    onDarkThemeChange: (Boolean) -> Unit,
+    mapStyle: MapStyle,
+    onMapStyleChange: (MapStyle) -> Unit,
     onStartService: () -> Unit,
     onSaveGeoJson: (String, String) -> Unit,
     onShareGeoJson: (String, String) -> Unit,
@@ -167,6 +196,23 @@ fun MainScreen(
     var selectedFeatureCategory by remember { mutableStateOf("Kerb/Edge") }
     var customFeatureNote by remember { mutableStateOf("") }
 
+    // Match system bars to the theme
+    val view = LocalView.current
+    val barColor = MaterialTheme.colorScheme.surfaceContainer
+    val navColor = MaterialTheme.colorScheme.surface
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (context as? Activity)?.window ?: return@SideEffect
+            window.statusBarColor = barColor.toArgb()
+            window.navigationBarColor = navColor.toArgb()
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !darkTheme
+                isAppearanceLightNavigationBars = !darkTheme
+            }
+        }
+    }
+    var showMenu by remember { mutableStateOf(false) }
+
     // Keep the screen awake while following a path
     val isFollowing = followSession != null
     DisposableEffect(isFollowing) {
@@ -178,36 +224,22 @@ fun MainScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("GeoSurvey GNSS", fontSize = 17.sp, fontWeight = FontWeight.Bold) },
+                title = {
+                    Text(
+                        "GeoSurvey",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
                 ),
                 actions = {
-                    // Import GeoJSON Overlay Button
-                    IconButton(onClick = onImportGeoJson) {
-                        Icon(Icons.Default.FileOpen, contentDescription = "Load GeoJSON Overlay")
-                    }
-
-                    // Mock GNSS vs Phone GPS Indicator
+                    // Compact GNSS status: source (EXT / GPS) + horizontal accuracy, coloured by accuracy
                     curLocation?.let { loc ->
-                        val sourceColor = if (isMockActive) Color(0xFF00695C) else Color(0xFFEF6C00)
-                        val sourceLabel = if (isMockActive) "EXT GNSS" else "PHONE GPS"
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = sourceColor,
-                            modifier = Modifier.padding(end = 6.dp)
-                        ) {
-                            Text(
-                                text = sourceLabel,
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        // Horizontal Accuracy Pill
                         val acc = loc.accuracy
                         val badgeColor = when {
                             acc <= 0.25f -> Color(0xFF2E7D32) // RTK Fix
@@ -215,18 +247,66 @@ fun MainScreen(
                             acc <= 3.0f -> Color(0xFFE65100)  // DGPS
                             else -> Color(0xFFC62828)
                         }
-                        Surface(
-                            shape = MaterialTheme.shapes.small,
-                            color = badgeColor,
-                            modifier = Modifier.padding(end = 10.dp)
-                        ) {
+                        Surface(shape = MaterialTheme.shapes.small, color = badgeColor) {
                             Text(
-                                text = "±${"%.2f".format(acc)}m",
+                                text = "${if (isMockActive) "EXT" else "GPS"} ±${"%.2f".format(acc)}m",
                                 color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                             )
+                        }
+                    }
+
+                    // Menu
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Load GeoJSON overlay") },
+                                leadingIcon = { Icon(Icons.Default.FileOpen, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    onImportGeoJson()
+                                }
+                            )
+                            if (importedOverlay != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Remove overlay") },
+                                    leadingIcon = { Icon(Icons.Default.LayersClear, contentDescription = null) },
+                                    onClick = {
+                                        showMenu = false
+                                        SurveyRepository.clearImportedOverlay()
+                                    }
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Dark theme") },
+                                leadingIcon = { Icon(Icons.Default.DarkMode, contentDescription = null) },
+                                trailingIcon = { Switch(checked = darkTheme, onCheckedChange = null) },
+                                onClick = { onDarkThemeChange(!darkTheme) }
+                            )
+                            HorizontalDivider()
+                            Text(
+                                "Map layer",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                            )
+                            MapStyle.values().forEach { style ->
+                                DropdownMenuItem(
+                                    text = { Text(style.label) },
+                                    leadingIcon = { RadioButton(selected = style == mapStyle, onClick = null) },
+                                    onClick = {
+                                        onMapStyleChange(style)
+                                        showMenu = false
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -240,30 +320,22 @@ fun MainScreen(
         ) {
             // Mode Navigation Tabs
             TabRow(selectedTabIndex = selectedTab) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text("Path", fontSize = 13.sp) },
-                    icon = { Icon(Icons.Default.Route, contentDescription = null) }
-                )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text("Measure", fontSize = 13.sp) },
-                    icon = { Icon(Icons.Default.Straighten, contentDescription = null) }
-                )
-                Tab(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    text = { Text("Area", fontSize = 13.sp) },
-                    icon = { Icon(Icons.Default.SquareFoot, contentDescription = null) }
-                )
-                Tab(
-                    selected = selectedTab == 3,
-                    onClick = { selectedTab = 3 },
-                    text = { Text("Follow", fontSize = 13.sp) },
-                    icon = { Icon(Icons.Default.Navigation, contentDescription = null) }
-                )
+                listOf(
+                    "Path" to Icons.Default.Route,
+                    "Measure" to Icons.Default.Straighten,
+                    "Area" to Icons.Default.SquareFoot,
+                    "Follow" to Icons.Default.Navigation
+                ).forEachIndexed { index, (label, icon) ->
+                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        ) {
+                            Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
+                            Text(label, fontSize = 12.sp, maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
             }
 
             // Interactive OpenStreetMap View
@@ -279,7 +351,9 @@ fun MainScreen(
                     measurePoints = measurePoints,
                     featurePoints = featurePoints,
                     importedOverlay = importedOverlay,
-                    followSession = followSession
+                    followSession = followSession,
+                    mapStyle = mapStyle,
+                    onMapStyleChange = onMapStyleChange
                 )
 
                 // Banner if an external GeoJSON overlay is active
@@ -425,9 +499,7 @@ fun MainScreen(
                                         enabled = pathPoints.isNotEmpty(),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Icon(Icons.Default.Undo, contentDescription = null)
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Undo")
+                                        Text("Undo", maxLines = 1, softWrap = false)
                                     }
 
                                     OutlinedButton(
@@ -456,7 +528,7 @@ fun MainScreen(
                                     ) {
                                         Icon(Icons.Default.Save, contentDescription = null)
                                         Spacer(Modifier.width(6.dp))
-                                        Text("Save .geojson")
+                                        Text("Save", maxLines = 1, softWrap = false)
                                     }
 
                                     OutlinedButton(
@@ -552,7 +624,7 @@ fun MainScreen(
                                             ) {
                                                 Icon(Icons.Default.MyLocation, contentDescription = null)
                                                 Spacer(Modifier.width(6.dp))
-                                                Text(if (captured) "Re-capture ${slot.name}" else "Capture ${slot.label}")
+                                                Text(if (captured) "Redo ${slot.name}" else "Capture ${slot.name}", maxLines = 1, softWrap = false)
                                             }
                                         }
                                     }
