@@ -8,14 +8,15 @@ A GNSS survey, path recording, distance measurement and path-following app for A
    - Continuous background GNSS logging via an Android `ForegroundService` (keeps recording with the screen locked).
    - **GPS is released when you leave the app** unless a path recording, path following or station hold is running. While one is, a notification shows what is using GPS, with a **Stop GPS** button.
    - Live cumulative distance (m / km), logged point counter, elevation, and ground speed (km/h).
-   - Selectable **Accuracy Gate** (`≤0.5m RTK`, `≤2.0m`, or `All`) in Settings to reject multipath outliers.
+   - Selectable **Accuracy Gate** (≤0.5 m RTK, ≤2, ≤5, ≤10 (default) or ≤25 m) in Settings to reject multipath outliers. A status line shows the live fix accuracy and warns when fixes are being skipped by the gate.
+   - The recorded path draws live on the map, with a dashed tail from the last logged point to your position. A point is logged once you move more than ~0.4× the fix accuracy (min 0.5 m), so standing still doesn't add jitter distance.
    - **Undo Last Point**, **Pause/Resume**, and direct `.geojson` saving or sharing.
 
 2. **Measure** – multi-station straight line measuring (same workflow and maths as the [SLA web app](https://github.com/pucejuice/sla))
    - **＋ Station** opens a full-screen hold: the phone is held still for the hold time (default 30 s) split into epochs (default 4). Every fix better than the gate (default ±15 m) is averaged, weighted 1/accuracy²; the quoted **±spread** is the DRMS of the epoch means, which sees GNSS bias that fix-to-fix scatter does not.
    - The first station becomes the **origin**. Every further station is measured from the current origin, so you can shoot as many lines from one station as you like.
    - **Any station can be the origin at any time**: pick it from the "From ST…" selector, tap its marker on the map, or tap *use* in Records.
-   - **Chain** toggle: each new station becomes the origin automatically, for consecutive (traverse-style) measuring.
+   - **Chain** toggle: each new station becomes the origin automatically, for consecutive (traverse-style) measuring. The panel shows the **cumulative chain distance** (e.g. ST1→ST4 · 3 legs · 45.67 m) and, with chain on, the running total including the live distance to you.
    - **Records** sheet groups lines under their origin station: *use*, *link…* (add lines from a station to other stored stations, computed from stored coordinates and flagged `linked`), *rename*, *delete*. **Undo** steps back the last station or link.
    - Distances are horizontal ground distances on the WGS84 ellipsoid (local tangent plane at the line midpoint, checked against Vincenty to < 1 mm over 1 km); bearings are grid bearings; line uncertainty is the two endpoint spreads in quadrature.
    - Optional **Record height** (Settings) adds Δh and slope distance. GNSS height is uncorrected and not AHD, so it is off by default.

@@ -49,7 +49,8 @@ import org.osmdroid.views.overlay.Polyline
 fun OsmMapView(
     modifier: Modifier = Modifier,
     currentLocation: Location?,
-    pathPoints: List<Location>,
+    pathPoints: List<TrackPoint>,
+    isRecordingPath: Boolean,
     stations: List<SurveyPoint>,
     measureLines: List<MeasuredLine>,
     originId: String?,
@@ -131,6 +132,7 @@ fun OsmMapView(
     LaunchedEffect(
         currentLocation,
         pathPoints.size,
+        isRecordingPath,
         stations,
         measureLines,
         originId,
@@ -197,9 +199,20 @@ fun OsmMapView(
                 outlinePaint.color = Color.parseColor("#1E88E5")
                 outlinePaint.strokeWidth = 8f
                 outlinePaint.style = Paint.Style.STROKE
-                setPoints(pathPoints.map { GeoPoint(it.latitude, it.longitude) })
+                setPoints(pathPoints.map { GeoPoint(it.lat, it.lon) })
             }
             mapView.overlays.add(polyline)
+        }
+        // While recording, a dashed tail from the last logged point to the live position
+        val lastLogged = pathPoints.lastOrNull()
+        if (isRecordingPath && lastLogged != null && currentLocation != null) {
+            val tail = Polyline().apply {
+                outlinePaint.color = Color.parseColor("#1E88E5")
+                outlinePaint.strokeWidth = 5f
+                outlinePaint.pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
+                setPoints(listOf(GeoPoint(lastLogged.lat, lastLogged.lon), GeoPoint(currentLocation.latitude, currentLocation.longitude)))
+            }
+            mapView.overlays.add(tail)
         }
 
         // 4. Measured Lines (SLA accent blue; linked lines dashed) with distance labels
@@ -333,7 +346,7 @@ fun OsmMapView(
             SmallFloatingActionButton(
                 onClick = {
                     val allGeoPoints = mutableListOf<GeoPoint>()
-                    allGeoPoints.addAll(pathPoints.map { GeoPoint(it.latitude, it.longitude) })
+                    allGeoPoints.addAll(pathPoints.map { GeoPoint(it.lat, it.lon) })
                     allGeoPoints.addAll(stations.map { GeoPoint(it.lat, it.lon) })
                     allGeoPoints.addAll(featurePoints.map { GeoPoint(it.latitude, it.longitude) })
                     importedOverlay?.lines?.flatMap { it.points }?.forEach {

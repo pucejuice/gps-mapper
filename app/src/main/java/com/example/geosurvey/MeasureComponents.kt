@@ -130,6 +130,36 @@ fun MeasurePanel(
         } ?: if (points.isEmpty()) "Press ＋ Station and hold still to set an origin." else "Walk to the next point and press ＋ Station."
         Text(lastText, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
 
+        // Chain: cumulative distance of consecutive legs ending at the current origin
+        val chain = chainEndingAt(lines, originId)
+        if (chain.isNotEmpty() && (settings.chain || chain.size >= 2)) {
+            val total = chain.sumOf { it.distanceM }
+            val start = MeasureRepository.point(chain.first().fromId)?.name ?: "?"
+            val end = MeasureRepository.point(chain.last().toId)?.name ?: "?"
+            val toYou = if (origin != null && currentLocation != null)
+                MeasureRepository.distance(origin, currentLocation.latitude, currentLocation.longitude) else null
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Timeline, contentDescription = null, tint = Sla.accent, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    "Chain $start→$end · ${chain.size} leg${if (chain.size == 1) "" else "s"} · ",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+                Text("${f2(total)} m", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Sla.accent, maxLines = 1)
+                if (toYou != null && settings.chain) {
+                    Text(
+                        "  (+${f2(toYou)} to you = ${f2(total + toYou)})",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
         // Row 2: actions
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -271,8 +301,10 @@ fun RecordsSheet(onDismiss: () -> Unit) {
             VoronoiBackground(modifier = Modifier.matchParentSize(), seed = 3, cellSizePx = 120f, scrim = Color(0x8C0A0D10))
             Column(modifier = Modifier.align(Alignment.CenterStart).padding(horizontal = 16.dp)) {
                 Text("RECORDS", fontSize = 11.sp, letterSpacing = 1.2.sp, color = Sla.textDim)
+                val chain = chainEndingAt(lines, originId)
                 Text(
-                    "${points.size} station${if (points.size == 1) "" else "s"} · ${lines.size} line${if (lines.size == 1) "" else "s"}",
+                    "${points.size} station${if (points.size == 1) "" else "s"} · ${lines.size} line${if (lines.size == 1) "" else "s"}" +
+                        (if (chain.size >= 2) " · chain ${f2(chain.sumOf { it.distanceM })} m" else ""),
                     fontWeight = FontWeight.Bold,
                     color = Sla.text
                 )

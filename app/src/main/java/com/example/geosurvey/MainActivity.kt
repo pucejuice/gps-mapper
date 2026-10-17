@@ -185,6 +185,7 @@ fun MainScreen(
     val curLocation by SurveyRepository.currentLocation.collectAsState()
     val isMockActive by SurveyRepository.isMockLocationActive.collectAsState()
     val pathPoints by SurveyRepository.pathPoints.collectAsState()
+    val isRecordingPath by SurveyRepository.isRecordingPath.collectAsState()
     val stations by MeasureRepository.points.collectAsState()
     val measureLines by MeasureRepository.lines.collectAsState()
     val originId by MeasureRepository.originId.collectAsState()
@@ -336,6 +337,7 @@ fun MainScreen(
                     modifier = Modifier.fillMaxSize(),
                     currentLocation = curLocation,
                     pathPoints = pathPoints,
+                    isRecordingPath = isRecordingPath,
                     stations = stations,
                     measureLines = measureLines,
                     originId = originId,

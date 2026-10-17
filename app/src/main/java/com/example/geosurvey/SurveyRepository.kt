@@ -46,14 +46,18 @@ object SurveyRepository {
     private val _isRecordingPath = MutableStateFlow(false)
     val isRecordingPath = _isRecordingPath.asStateFlow()
 
-    private val _pathPoints = MutableStateFlow<List<Location>>(emptyList())
+    private val _pathPoints = MutableStateFlow<List<TrackPoint>>(emptyList())
     val pathPoints = _pathPoints.asStateFlow()
 
     private val _totalDistanceMeters = MutableStateFlow(0.0)
     val totalDistanceMeters = _totalDistanceMeters.asStateFlow()
 
-    private val _maxAccuracyFilterMeters = MutableStateFlow(5.0f)
+    private val _maxAccuracyFilterMeters = MutableStateFlow(10.0f)
     val maxAccuracyFilterMeters = _maxAccuracyFilterMeters.asStateFlow()
+
+    /** Fixes skipped for being worse than the gate since recording started (shown in the Path panel). */
+    private val _pathRejectedFixes = MutableStateFlow(0)
+    val pathRejectedFixes = _pathRejectedFixes.asStateFlow()
 
     // --- Mode 2: Measure state lives in MeasureRepository ---
 
@@ -110,18 +114,22 @@ object SurveyRepository {
 
         // 1. Continuous Path Recording
         if (_isRecordingPath.value) {
-            if (loc.accuracy <= _maxAccuracyFilterMeters.value) {
-                val currentList = _pathPoints.value
-                if (currentList.isNotEmpty()) {
-                    val lastLoc = currentList.last()
-                    val delta = lastLoc.distanceTo(loc)
-                    if (delta >= 0.35f) {
-                        _totalDistanceMeters.value += delta
-                        _pathPoints.value = currentList + loc
-                    }
-                } else {
-                    _pathPoints.value = listOf(loc)
+            // Copy the values out: never keep the provider's Location object itself
+            val fix = TrackPoint(
+                lat = loc.latitude,
+                lon = loc.longitude,
+                alt = if (loc.hasAltitude()) loc.altitude else null,
+                acc = if (loc.hasAccuracy()) loc.accuracy.toDouble() else 999.0,
+                t = System.currentTimeMillis()
+            )
+            val current = _pathPoints.value
+            when (val d = PathRecording.evaluate(current.lastOrNull(), fix, _maxAccuracyFilterMeters.value.toDouble())) {
+                is TrackDecision.Accept -> {
+                    _totalDistanceMeters.value += d.addedMeters
+                    _pathPoints.value = current + fix
                 }
+                TrackDecision.RejectAccuracy -> _pathRejectedFixes.value += 1
+                TrackDecision.TooClose -> {}
             }
         }
 
@@ -142,6 +150,7 @@ object SurveyRepository {
     }
 
     fun startPathRecording() {
+        _pathRejectedFixes.value = 0
         _isRecordingPath.value = true
     }
 
@@ -154,7 +163,7 @@ object SurveyRepository {
         if (current.size >= 2) {
             val last = current.last()
             val prev = current[current.size - 2]
-            val delta = prev.distanceTo(last)
+            val delta = Geodesy.groundDistance(prev.lat, prev.lon, last.lat, last.lon)
             _totalDistanceMeters.value = (_totalDistanceMeters.value - delta).coerceAtLeast(0.0)
             _pathPoints.value = current.dropLast(1)
         } else if (current.size == 1) {
@@ -364,9 +373,9 @@ object SurveyRepository {
                     val coords = JSONArray()
                     for (pt in points) {
                         coords.put(JSONArray().apply {
-                            put(pt.longitude)
-                            put(pt.latitude)
-                            put(pt.altitude)
+                            put(pt.lon)
+                            put(pt.lat)
+                            pt.alt?.let { put(it) }
                         })
                     }
                     put("coordinates", coords)

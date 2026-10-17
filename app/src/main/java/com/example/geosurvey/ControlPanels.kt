@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.sp
 
 // Compact bottom panels: each mode fits in ~2 rows so the map keeps most of the screen.
 
-val accuracyGates = listOf(0.5f to "≤0.5 m (RTK)", 2.0f to "≤2 m", 10.0f to "All (≤10 m)")
+val accuracyGates = listOf(0.5f to "≤0.5 m (RTK)", 2.0f to "≤2 m", 5.0f to "≤5 m", 10.0f to "≤10 m", 25.0f to "≤25 m (any)")
 
 fun formatMeters(m: Double): String =
     if (kotlin.math.abs(m) >= 1000) "${"%.2f".format(m / 1000)} km" else "${"%.1f".format(m)} m"
@@ -106,6 +106,8 @@ fun PathPanel(
     val isRecording by SurveyRepository.isRecordingPath.collectAsState()
     val pathPoints by SurveyRepository.pathPoints.collectAsState()
     val totalDistance by SurveyRepository.totalDistanceMeters.collectAsState()
+    val gate by SurveyRepository.maxAccuracyFilterMeters.collectAsState()
+    val rejected by SurveyRepository.pathRejectedFixes.collectAsState()
 
     PanelColumn {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -114,6 +116,24 @@ fun PathPanel(
             Stat("Elev", currentLocation?.altitude?.let { "${"%.1f".format(it)} m" } ?: "--")
             Stat("Speed", currentLocation?.speed?.let { "${"%.1f".format(it * 3.6f)} km/h" } ?: "--")
         }
+        // Recording status, so it's obvious when fixes are being skipped
+        val acc = currentLocation?.accuracy
+        val gateText = if (gate < 1f) "%.1f".format(gate) else "%.0f".format(gate)
+        val (status, warn) = when {
+            !isRecording && pathPoints.isEmpty() -> "Press Record and walk the path." to false
+            !isRecording -> "Paused · ${pathPoints.size} points" to false
+            currentLocation == null -> "Recording · waiting for GPS…" to true
+            acc != null && acc > gate ->
+                "Recording · fix ±${"%.1f".format(acc)} m is worse than the ±$gateText m gate — not logging (Settings)" to true
+            else -> "● Recording · fix ±${"%.1f".format(acc ?: 0f)} m · gate ±$gateText m" +
+                (if (rejected > 0) " · $rejected skipped" else "") to false
+        }
+        Text(
+            status,
+            fontSize = 12.sp,
+            color = if (warn) Sla.warn else if (isRecording) Sla.go else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),

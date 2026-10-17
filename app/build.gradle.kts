@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.geosurvey"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.3.2"
+        versionCode = 7
+        versionName = "1.4"
 
         vectorDrawables {
             useSupportLibrary = true
