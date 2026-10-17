@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
@@ -14,7 +15,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.FitScreen
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -30,10 +33,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.modules.SqlTileWriter
 import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.CopyrightOverlay
 import org.osmdroid.views.overlay.Marker
@@ -53,7 +58,9 @@ fun OsmMapView(
     importedOverlay: ImportedGeoJsonOverlay?,
     followSession: FollowSession?,
     mapStyle: MapStyle,
-    onMapStyleChange: (MapStyle) -> Unit
+    onMapStyleChange: (MapStyle) -> Unit,
+    /** True heading of the user in degrees, or null when unknown. */
+    headingDegrees: Double?
 ) {
     val context = LocalContext.current
     var hasAutoCentered by remember { mutableStateOf(false) }
@@ -83,9 +90,36 @@ fun OsmMapView(
         MapView(context).apply {
             setTileSource(mapStyle.tileSource())
             setMultiTouchControls(true)
+            // Built-in zoom buttons replaced by styled ones in the control column
+            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             maxZoomLevel = 21.0
             controller.setZoom(19.0)
         }
+    }
+
+    // Live position: flat dot with a heading triangle, plus a faint accuracy circle.
+    // Kept as persistent overlays so heading changes only redraw this icon.
+    val liveMarker = remember {
+        Marker(mapView).apply {
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            setInfoWindow(null)
+            setOnMarkerClickListener { _, _ -> true }
+            icon = userLocationIcon(context, null)
+        }
+    }
+    val accuracyCircle = remember {
+        Polygon().apply {
+            fillPaint.color = Color.argb(40, 61, 169, 252)
+            outlinePaint.color = Color.argb(120, 61, 169, 252)
+            outlinePaint.strokeWidth = 2f
+            setInfoWindow(null)
+        }
+    }
+    // Quantised so sensor jitter doesn't redraw the icon every frame
+    val headingStep = headingDegrees?.let { ((it / 3.0).roundToInt() * 3) % 360 }
+    LaunchedEffect(headingStep) {
+        liveMarker.icon = userLocationIcon(context, headingStep?.toDouble())
+        mapView.invalidate()
     }
 
     LaunchedEffect(mapStyle) {
@@ -252,11 +286,11 @@ fun OsmMapView(
         // 6. Live GNSS Location
         currentLocation?.let { loc ->
             val curPoint = GeoPoint(loc.latitude, loc.longitude)
-            val liveMarker = Marker(mapView).apply {
-                position = curPoint
-                title = "Live GNSS (±${"%.2f".format(loc.accuracy)}m)"
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            if (loc.hasAccuracy() && loc.accuracy > 0.5f) {
+                accuracyCircle.points = Polygon.pointsAsCircle(curPoint, loc.accuracy.toDouble())
+                mapView.overlays.add(accuracyCircle)
             }
+            liveMarker.position = curPoint
             mapView.overlays.add(liveMarker)
 
             if (!hasAutoCentered || followSession != null) {
@@ -340,6 +374,24 @@ fun OsmMapView(
                     }
                 }
             }
+
+            Spacer(Modifier.height(6.dp))
+
+            // Zoom in / out, styled like the other map controls
+            SmallFloatingActionButton(
+                onClick = { mapView.controller.zoomIn() },
+                containerColor = MaterialTheme.colorScheme.surface,
+                elevation = FloatingActionButtonDefaults.elevation(4.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Zoom in")
+            }
+            SmallFloatingActionButton(
+                onClick = { mapView.controller.zoomOut() },
+                containerColor = MaterialTheme.colorScheme.surface,
+                elevation = FloatingActionButtonDefaults.elevation(4.dp)
+            ) {
+                Icon(Icons.Default.Remove, contentDescription = "Zoom out")
+            }
         }
     }
 }
@@ -390,5 +442,50 @@ private fun distanceLabelIcon(context: Context, text: String): BitmapDrawable {
         color = Color.argb(220, 27, 31, 36)
     })
     c.drawText(text, padX, padY + textPaint.textSize * 0.85f, textPaint)
+    return BitmapDrawable(context.resources, bmp)
+}
+
+/**
+ * Flat user-location icon: a filled dot with a white ring centred on the fix, and a
+ * triangle just outside the ring pointing along [headingDeg] (true, clockwise from north;
+ * the map is always north-up). The triangle is omitted when the heading is unknown.
+ */
+private fun userLocationIcon(context: Context, headingDeg: Double?): BitmapDrawable {
+    val d = context.resources.displayMetrics.density
+    val r = 8f * d                 // dot radius
+    val ring = 2.5f * d
+    val gap = 2.5f * d             // dot ring -> triangle base
+    val triH = 7f * d
+    val triW = 2 * r * 0.8f        // slightly narrower than the dot diameter
+    val half = r + ring + gap + triH + 2f * d
+    val size = (2 * half).toInt()
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val cx = size / 2f
+    val cy = size / 2f
+    val accent = Color.parseColor("#3DA9FC")
+
+    if (headingDeg != null) {
+        c.save()
+        c.rotate(headingDeg.toFloat(), cx, cy)
+        val baseY = cy - (r + ring + gap)
+        val tri = Path().apply {
+            moveTo(cx, baseY - triH)
+            lineTo(cx + triW / 2, baseY)
+            lineTo(cx - triW / 2, baseY)
+            close()
+        }
+        // Thin white edge keeps it readable on imagery
+        c.drawPath(tri, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * d
+            strokeJoin = Paint.Join.ROUND
+        })
+        c.drawPath(tri, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })
+        c.restore()
+    }
+    c.drawCircle(cx, cy, r + ring, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
+    c.drawCircle(cx, cy, r, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })
     return BitmapDrawable(context.resources, bmp)
 }

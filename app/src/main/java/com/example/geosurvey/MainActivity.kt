@@ -189,6 +189,10 @@ fun MainScreen(
     val measureLines by MeasureRepository.lines.collectAsState()
     val originId by MeasureRepository.originId.collectAsState()
     val occupation by MeasureRepository.occupation.collectAsState()
+
+    // Facing direction for the location marker: GPS course when moving, compass otherwise
+    val magneticAzimuth by rememberCompassAzimuth()
+    val heading = resolveTrueHeading(curLocation, magneticAzimuth)?.first
     val featurePoints by SurveyRepository.featurePoints.collectAsState()
     val importedOverlay by SurveyRepository.importedOverlay.collectAsState()
     val followSession by SurveyRepository.followSession.collectAsState()
@@ -340,7 +344,8 @@ fun MainScreen(
                     importedOverlay = importedOverlay,
                     followSession = followSession,
                     mapStyle = mapStyle,
-                    onMapStyleChange = onMapStyleChange
+                    onMapStyleChange = onMapStyleChange,
+                    headingDegrees = heading
                 )
 
                 // Small label if an external GeoJSON overlay is active
