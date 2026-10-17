@@ -82,6 +82,7 @@ fun OsmMapView(
 
     LaunchedEffect(mapStyle) {
         mapView.setTileSource(mapStyle.tileSource())
+        mapView.overlayManager.tilesOverlay.setColorFilter(mapStyle.tileColorFilter())
         mapView.invalidate()
     }
 

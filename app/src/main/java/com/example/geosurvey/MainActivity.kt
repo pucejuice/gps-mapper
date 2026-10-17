@@ -209,8 +209,6 @@ fun MainScreen(
         SettingsDialog(
             darkTheme = darkTheme,
             onDarkThemeChange = onDarkThemeChange,
-            mapStyle = mapStyle,
-            onMapStyleChange = onMapStyleChange,
             onDismiss = { showSettings = false }
         )
     }

@@ -366,8 +366,6 @@ private fun SectionLabel(text: String) {
 fun SettingsDialog(
     darkTheme: Boolean,
     onDarkThemeChange: (Boolean) -> Unit,
-    mapStyle: MapStyle,
-    onMapStyleChange: (MapStyle) -> Unit,
     onDismiss: () -> Unit
 ) {
     val accuracyGate by SurveyRepository.maxAccuracyFilterMeters.collectAsState()
@@ -401,10 +399,6 @@ fun SettingsDialog(
                     RadioRow("$ep epochs", targetEpochs == ep) { SurveyRepository.setTargetEpochs(ep) }
                 }
 
-                SectionLabel("Map layer")
-                MapStyle.values().forEach { style ->
-                    RadioRow(style.label, style == mapStyle) { onMapStyleChange(style) }
-                }
             }
         }
     )

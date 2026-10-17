@@ -32,8 +32,8 @@ A GNSS survey, path recording, distance measurement and path-following app for A
 5. **Field & Map Utilities**
    - **GNSS status badge:** `EXT` for external (mock) receiver coordinates or `GPS` for the phone's own GPS, with horizontal accuracy, coloured green (RTK) / blue (sub-metre) / orange / red.
    - **Map-first layout:** the map fills the screen; each mode has a compact two-row control panel above the mode tabs at the bottom. Save / Share / Clear live behind a single save button.
-   - **☰ Menu:** load or remove a GeoJSON overlay, and **Settings** (dark/light theme, path accuracy gate, measure averaging epochs, map layer).
-   - **Map layers:** Dark (CARTO Dark Matter, default), Streets (CARTO Voyager), Satellite (Esri World Imagery), Topographic (OpenTopoMap) and OpenStreetMap. Also selectable from the layers button on the map.
+   - **☰ Menu:** load or remove a GeoJSON overlay, and **Settings** (dark/light theme, path accuracy gate, measure averaging epochs).
+   - **Map layers** (layers button on the map): Dark (Esri street map with a dark filter, default), Streets, Satellite and Topographic, all from Esri ArcGIS Online.
    - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and layer picker.
 
 ## Build
