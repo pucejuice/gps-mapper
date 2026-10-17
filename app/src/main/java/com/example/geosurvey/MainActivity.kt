@@ -74,12 +74,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val settings = getSharedPreferences("geosurvey_settings", MODE_PRIVATE)
+        MeasureRepository.attach(this)
         setContent {
             var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", true)) }
             var mapStyle by remember {
                 mutableStateOf(MapStyle.fromName(settings.getString("map_style", null), darkTheme))
             }
-            MaterialTheme(colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()) {
+            MaterialTheme(colorScheme = if (darkTheme) slaDarkColorScheme() else slaLightColorScheme()) {
                 MainScreen(
                     darkTheme = darkTheme,
                     onDarkThemeChange = { dark ->
@@ -173,7 +174,10 @@ fun MainScreen(
     val curLocation by SurveyRepository.currentLocation.collectAsState()
     val isMockActive by SurveyRepository.isMockLocationActive.collectAsState()
     val pathPoints by SurveyRepository.pathPoints.collectAsState()
-    val measurePoints by SurveyRepository.measurePoints.collectAsState()
+    val stations by MeasureRepository.points.collectAsState()
+    val measureLines by MeasureRepository.lines.collectAsState()
+    val originId by MeasureRepository.originId.collectAsState()
+    val occupation by MeasureRepository.occupation.collectAsState()
     val featurePoints by SurveyRepository.featurePoints.collectAsState()
     val importedOverlay by SurveyRepository.importedOverlay.collectAsState()
     val followSession by SurveyRepository.followSession.collectAsState()
@@ -181,29 +185,38 @@ fun MainScreen(
     var selectedTab by remember { mutableStateOf(0) } // 0 = Path, 1 = Measure, 2 = Area, 3 = Follow
     var showMenu by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showRecords by remember { mutableStateOf(false) }
 
-    // Match system bars to the theme
+    // Status bar matches the Voronoi top bar; navigation bar matches the bottom panel
     val view = LocalView.current
-    val barColor = MaterialTheme.colorScheme.surfaceContainer
+    val navColor = MaterialTheme.colorScheme.surfaceContainerHigh
     if (!view.isInEditMode) {
         SideEffect {
             val window = (context as? Activity)?.window ?: return@SideEffect
-            window.statusBarColor = barColor.toArgb()
-            window.navigationBarColor = barColor.toArgb()
+            window.statusBarColor = Sla.mesh[0].toArgb()
+            window.navigationBarColor = navColor.toArgb()
             WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars = !darkTheme
+                isAppearanceLightStatusBars = false
                 isAppearanceLightNavigationBars = !darkTheme
             }
         }
     }
 
-    // Keep the screen awake while following a path
-    val isFollowing = followSession != null
-    DisposableEffect(isFollowing) {
+    // Measure messages (station set, line measured, ...)
+    LaunchedEffect(Unit) {
+        MeasureRepository.events.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+    }
+
+    // Keep the screen awake while following a path or occupying a station
+    val keepAwake = followSession != null || occupation != null
+    DisposableEffect(keepAwake) {
         val window = (context as? Activity)?.window
-        if (isFollowing) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (keepAwake) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
+
+    occupation?.let { OccupationOverlay(it) }
+    if (showRecords) RecordsSheet(onDismiss = { showRecords = false })
 
     if (showSettings) {
         SettingsDialog(
@@ -215,6 +228,8 @@ fun MainScreen(
 
     Scaffold(
         topBar = {
+          Box {
+            VoronoiBackground(modifier = Modifier.matchParentSize(), seed = 5, cellSizePx = 150f, scrim = Color(0x590A0D10))
             TopAppBar(
                 title = {
                     Text(
@@ -226,8 +241,9 @@ fun MainScreen(
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                    containerColor = Color.Transparent,
+                    titleContentColor = Sla.text,
+                    actionIconContentColor = Sla.text
                 ),
                 actions = {
                     // Compact GNSS status: source (EXT / GPS) + horizontal accuracy, coloured by accuracy
@@ -287,6 +303,7 @@ fun MainScreen(
                     }
                 }
             )
+          }
         }
     ) { paddingValues ->
         Column(
@@ -304,7 +321,10 @@ fun MainScreen(
                     modifier = Modifier.fillMaxSize(),
                     currentLocation = curLocation,
                     pathPoints = pathPoints,
-                    measurePoints = measurePoints,
+                    stations = stations,
+                    measureLines = measureLines,
+                    originId = originId,
+                    showMeasureGuide = selectedTab == 1,
                     featurePoints = featurePoints,
                     importedOverlay = importedOverlay,
                     followSession = followSession,
@@ -342,7 +362,7 @@ fun MainScreen(
                 Column {
                     when (selectedTab) {
                         0 -> PathPanel(curLocation, onSaveGeoJson, onShareGeoJson)
-                        1 -> MeasurePanel(curLocation, onSaveGeoJson, onShareGeoJson)
+                        1 -> MeasurePanel(curLocation, { showRecords = true }, onSaveGeoJson, onShareGeoJson)
                         2 -> AreaPanel(curLocation, onSaveGeoJson, onShareGeoJson)
                         3 -> FollowPanel(importedOverlay, followSession, curLocation, onImportGeoJson)
                     }

@@ -10,10 +10,15 @@ A GNSS survey, path recording, distance measurement and path-following app for A
    - Selectable **Accuracy Gate** (`≤0.5m RTK`, `≤2.0m`, or `All`) in Settings to reject multipath outliers.
    - **Undo Last Point**, **Pause/Resume**, and direct `.geojson` saving or sharing.
 
-2. **Measure** – straight line distance between two points
-   - Capture **Point A** and **Point B**, each averaged over 4 or 10 stationary epochs (set in Settings), with horizontal spread (`±m`) reported.
-   - Reports **horizontal distance**, **slope distance**, **height difference (Δh)** and **true bearing** A → B.
-   - Live distance from Point A to your current position.
+2. **Measure** – multi-station straight line measuring (same workflow and maths as the [SLA web app](https://github.com/pucejuice/sla))
+   - **＋ Station** opens a full-screen hold: the phone is held still for the hold time (default 30 s) split into epochs (default 4). Every fix better than the gate (default ±15 m) is averaged, weighted 1/accuracy²; the quoted **±spread** is the DRMS of the epoch means, which sees GNSS bias that fix-to-fix scatter does not.
+   - The first station becomes the **origin**. Every further station is measured from the current origin, so you can shoot as many lines from one station as you like.
+   - **Any station can be the origin at any time**: pick it from the "From ST…" selector, tap its marker on the map, or tap *use* in Records.
+   - **Chain** toggle: each new station becomes the origin automatically, for consecutive (traverse-style) measuring.
+   - **Records** sheet groups lines under their origin station: *use*, *link…* (add lines from a station to other stored stations, computed from stored coordinates and flagged `linked`), *rename*, *delete*. **Undo** steps back the last station or link.
+   - Distances are horizontal ground distances on the WGS84 ellipsoid (local tangent plane at the line midpoint, checked against Vincenty to < 1 mm over 1 km); bearings are grid bearings; line uncertainty is the two endpoint spreads in quadrature.
+   - Optional **Record height** (Settings) adds Δh and slope distance. GNSS height is uncorrected and not AHD, so it is off by default.
+   - Records are kept on the phone and survive closing the app. Export writes stations (Point) and `measured_line` features (2-point LineString) with distance, uncertainty, bearing and method.
 
 3. **Area** – feature & area survey
    - One-tap point feature logging with preset tags (`Kerb/Edge`, `Boundary`, `Pit/Drain`, `Power/Util`, `Tree`, `Sign/Post`) and custom notes.
@@ -32,7 +37,8 @@ A GNSS survey, path recording, distance measurement and path-following app for A
 5. **Field & Map Utilities**
    - **GNSS status badge:** `EXT` for external (mock) receiver coordinates or `GPS` for the phone's own GPS, with horizontal accuracy, coloured green (RTK) / blue (sub-metre) / orange / red.
    - **Map-first layout:** the map fills the screen; each mode has a compact two-row control panel above the mode tabs at the bottom. Save / Share / Clear live behind a single save button.
-   - **☰ Menu:** load or remove a GeoJSON overlay, and **Settings** (dark/light theme, path accuracy gate, measure averaging epochs).
+   - **☰ Menu:** load or remove a GeoJSON overlay, and **Settings** (dark/light theme, path accuracy gate, station hold time / epochs / gate, record height).
+   - **Look:** SLA colour palette, with the faceted slate Voronoi mesh from the SLA / ingeniir cover art on the top bar, the station hold screen, the Records header and the launcher icon.
    - **Map layers** (layers button on the map): Dark (Esri street map with a dark filter, default), Streets, Satellite and Topographic, all from Esri ArcGIS Online.
    - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and layer picker.
 

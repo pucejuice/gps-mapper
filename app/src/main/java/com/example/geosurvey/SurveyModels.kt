@@ -1,26 +1,47 @@
 package com.example.geosurvey
 
-enum class MeasureSlot(val label: String) { A("Point A"), B("Point B") }
-
-data class MeasurePoint(
+/** An averaged occupation. Any station can be the origin for new lines at any time. */
+data class SurveyPoint(
+    val id: String,
     val name: String,
-    val latitude: Double,
-    val longitude: Double,
-    val altitude: Double,
-    val accuracy: Float,
-    val epochSpreadMeters: Double = 0.0,
-    val epochCount: Int = 4,
-    val isMockProvider: Boolean = false,
-    val timestamp: Long = System.currentTimeMillis()
+    val lat: Double,
+    val lon: Double,
+    val alt: Double?,
+    val stats: OccupationStats,
+    val occupiedUtc: Long,
+    val mockGnss: Boolean
 )
 
-data class StraightLineMeasurement(
-    val from: MeasurePoint,
-    val to: MeasurePoint,
-    val horizontalDistanceMeters: Double,
-    val slopeDistanceMeters: Double,
-    val verticalDeltaMeters: Double,
-    val bearingDegrees: Double
+/** Straight line between two stored stations. [linked] = computed from stored points, not occupied in sequence. */
+data class MeasuredLine(
+    val id: String,
+    val fromId: String,
+    val toId: String,
+    val distanceM: Double,
+    val bearingDeg: Double,
+    val sigmaM: Double?,
+    val linked: Boolean,
+    val timeUtc: Long
+)
+
+data class MeasureSettings(
+    val dwellS: Int = 30,
+    val epochs: Int = 4,
+    val gateM: Double = 15.0,
+    val recordHeight: Boolean = false,
+    /** When on, each new station becomes the origin (consecutive / traverse measuring). */
+    val chain: Boolean = false
+)
+
+data class OccupationProgress(
+    val name: String,
+    val dwellMs: Long,
+    val epochs: Int,
+    val elapsedMs: Long,
+    val rejected: Int,
+    val gateM: Double,
+    val live: OccupationStats?,
+    val waitingForFreshFix: Boolean
 )
 
 data class SurveyFeaturePoint(

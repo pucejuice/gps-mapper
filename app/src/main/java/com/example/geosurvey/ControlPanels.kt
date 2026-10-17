@@ -1,6 +1,7 @@
 package com.example.geosurvey
 
 import android.location.Location
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -21,7 +22,6 @@ import androidx.compose.ui.unit.sp
 // Compact bottom panels: each mode fits in ~2 rows so the map keeps most of the screen.
 
 val accuracyGates = listOf(0.5f to "≤0.5 m (RTK)", 2.0f to "≤2 m", 10.0f to "All (≤10 m)")
-val epochOptions = listOf(4, 10)
 
 fun formatMeters(m: Double): String =
     if (kotlin.math.abs(m) >= 1000) "${"%.2f".format(m / 1000)} km" else "${"%.1f".format(m)} m"
@@ -143,113 +143,6 @@ fun PathPanel(
     }
 }
 
-// ---------------- Measure ----------------
-@Composable
-fun MeasurePanel(
-    currentLocation: Location?,
-    onSave: (String, String) -> Unit,
-    onShare: (String, String) -> Unit
-) {
-    val measurePoints by SurveyRepository.measurePoints.collectAsState()
-    val measurement by SurveyRepository.measurement.collectAsState()
-    val samplingSlot by SurveyRepository.samplingSlot.collectAsState()
-    val isSampling by SurveyRepository.isSamplingEpochs.collectAsState()
-    val epochCount by SurveyRepository.currentEpochCount.collectAsState()
-    val targetEpochs by SurveyRepository.targetEpochs.collectAsState()
-
-    PanelColumn {
-        val m = measurement
-        val pointA = measurePoints[MeasureSlot.A]
-        if (m != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Stat("A → B horizontal", "${"%.2f".format(m.horizontalDistanceMeters)} m")
-                Stat("Slope", "${"%.2f".format(m.slopeDistanceMeters)} m")
-                Stat("Δh", "${"%+.2f".format(m.verticalDeltaMeters)} m")
-                Stat("Bearing", "${"%.1f".format(m.bearingDegrees)}°")
-            }
-        }
-        if (pointA != null && currentLocation != null) {
-            val live = SurveyRepository.measureBetween(
-                pointA,
-                MeasurePoint("You", currentLocation.latitude, currentLocation.longitude, currentLocation.altitude, currentLocation.accuracy)
-            )
-            Text(
-                "A → you: ${"%.2f".format(live.horizontalDistanceMeters)} m  ·  ${"%.1f".format(live.bearingDegrees)}°",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else if (m == null) {
-            Text(
-                "Capture Point A and Point B to measure a straight line distance.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        if (isSampling) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "Hold still: ${samplingSlot?.label ?: ""} ($epochCount/$targetEpochs)",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    LinearProgressIndicator(
-                        progress = epochCount.toFloat() / targetEpochs.toFloat(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                TextButton(onClick = { SurveyRepository.cancelPointCapture() }) { Text("Cancel") }
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                MeasureSlot.values().forEach { slot ->
-                    val captured = measurePoints.containsKey(slot)
-                    val onClick = { SurveyRepository.startPointCapture(slot) }
-                    val content: @Composable RowScope.() -> Unit = {
-                        Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (captured) "Redo ${slot.name}" else "Point ${slot.name}", maxLines = 1, softWrap = false)
-                    }
-                    if (captured) {
-                        OutlinedButton(
-                            onClick = onClick,
-                            enabled = currentLocation != null,
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier.weight(1f),
-                            content = content
-                        )
-                    } else {
-                        Button(
-                            onClick = onClick,
-                            enabled = currentLocation != null,
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier.weight(1f),
-                            content = content
-                        )
-                    }
-                }
-                ExportButton(
-                    measurePoints.isNotEmpty(), "measurement", SurveyRepository::exportMeasurementGeoJson, onSave, onShare,
-                    "Reset A and B", SurveyRepository::clearMeasurement
-                )
-            }
-        }
-    }
-}
-
 // ---------------- Area ----------------
 private val featureCategories = listOf("Kerb/Edge", "Boundary", "Pit/Drain", "Power/Util", "Tree", "Sign/Post")
 
@@ -352,6 +245,22 @@ private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
+private fun <T> ChipRow(label: String, options: List<T>, selected: T, format: (T) -> String, onSelect: (T) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+    ) {
+        Text(label, fontSize = 13.sp, modifier = Modifier.width(52.dp))
+        options.forEach { o ->
+            FilterChip(selected = o == selected, onClick = { onSelect(o) }, label = { Text(format(o), fontSize = 12.sp) })
+        }
+    }
+}
+
+@Composable
 private fun SectionLabel(text: String) {
     Text(
         text,
@@ -369,7 +278,7 @@ fun SettingsDialog(
     onDismiss: () -> Unit
 ) {
     val accuracyGate by SurveyRepository.maxAccuracyFilterMeters.collectAsState()
-    val targetEpochs by SurveyRepository.targetEpochs.collectAsState()
+    val measure by MeasureRepository.settings.collectAsState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -394,11 +303,32 @@ fun SettingsDialog(
                     RadioRow(label, accuracyGate == gate) { SurveyRepository.setAccuracyFilter(gate) }
                 }
 
-                SectionLabel("Measure point averaging")
-                epochOptions.forEach { ep ->
-                    RadioRow("$ep epochs", targetEpochs == ep) { SurveyRepository.setTargetEpochs(ep) }
+                SectionLabel("Station occupation (Measure)")
+                ChipRow("Hold", listOf(10, 30, 60, 120), measure.dwellS, { "$it s" }) { v -> MeasureRepository.updateSettings { it.copy(dwellS = v) } }
+                ChipRow("Epochs", listOf(2, 4, 6, 10), measure.epochs, { "$it" }) { v -> MeasureRepository.updateSettings { it.copy(epochs = v) } }
+                ChipRow("Gate", listOf(5.0, 10.0, 15.0, 30.0), measure.gateM, { "±${it.toInt()} m" }) { v -> MeasureRepository.updateSettings { it.copy(gateM = v) } }
+                Text(
+                    "Every fix inside the hold is averaged (weighted 1/accuracy²); the quoted ± is the spread between epochs. " +
+                        "A longer hold beats more epochs.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .selectable(selected = measure.recordHeight, onClick = {
+                            MeasureRepository.updateSettings { it.copy(recordHeight = !it.recordHeight) }
+                        })
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Record height", fontSize = 14.sp)
+                        Text("Adds Δh and slope distance. GNSS height is uncorrected, not AHD.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
+                    }
+                    Switch(checked = measure.recordHeight, onCheckedChange = { on -> MeasureRepository.updateSettings { it.copy(recordHeight = on) } })
                 }
-
             }
         }
     )

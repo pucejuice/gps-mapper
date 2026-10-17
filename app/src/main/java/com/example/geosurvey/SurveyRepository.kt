@@ -30,26 +30,7 @@ object SurveyRepository {
     private val _maxAccuracyFilterMeters = MutableStateFlow(5.0f)
     val maxAccuracyFilterMeters = _maxAccuracyFilterMeters.asStateFlow()
 
-    // --- Mode 2: Straight Line Measurement State ---
-    private val _measurePoints = MutableStateFlow<Map<MeasureSlot, MeasurePoint>>(emptyMap())
-    val measurePoints = _measurePoints.asStateFlow()
-
-    private val _measurement = MutableStateFlow<StraightLineMeasurement?>(null)
-    val measurement = _measurement.asStateFlow()
-
-    private val _isSamplingEpochs = MutableStateFlow(false)
-    val isSamplingEpochs = _isSamplingEpochs.asStateFlow()
-
-    private val _currentEpochCount = MutableStateFlow(0)
-    val currentEpochCount = _currentEpochCount.asStateFlow()
-
-    private val _targetEpochs = MutableStateFlow(4)
-    val targetEpochs = _targetEpochs.asStateFlow()
-
-    private val _samplingSlot = MutableStateFlow<MeasureSlot?>(null)
-    val samplingSlot = _samplingSlot.asStateFlow()
-
-    private val epochBuffer = mutableListOf<Location>()
+    // --- Mode 2: Measure state lives in MeasureRepository ---
 
     // --- Mode 3: Feature & Area Survey State ---
     private val _featurePoints = MutableStateFlow<List<SurveyFeaturePoint>>(emptyList())
@@ -101,48 +82,8 @@ object SurveyRepository {
             }
         }
 
-        // 2. Multi-Epoch Point Averaging (Measure)
-        val slot = _samplingSlot.value
-        if (_isSamplingEpochs.value && slot != null) {
-            epochBuffer.add(loc)
-            _currentEpochCount.value = epochBuffer.size
-            val req = _targetEpochs.value
-
-            if (epochBuffer.size >= req) {
-                val avgLat = epochBuffer.map { it.latitude }.average()
-                val avgLon = epochBuffer.map { it.longitude }.average()
-                val avgAlt = epochBuffer.map { it.altitude }.average()
-                val avgAcc = epochBuffer.map { it.accuracy }.average().toFloat()
-
-                // Compute max horizontal spread (RMS/jitter) across the epochs
-                var maxSpread = 0.0
-                for (sample in epochBuffer) {
-                    val d = FloatArray(1)
-                    Location.distanceBetween(avgLat, avgLon, sample.latitude, sample.longitude, d)
-                    if (d[0] > maxSpread) maxSpread = d[0].toDouble()
-                }
-
-                val newPoint = MeasurePoint(
-                    name = slot.label,
-                    latitude = avgLat,
-                    longitude = avgLon,
-                    altitude = avgAlt,
-                    accuracy = avgAcc,
-                    epochSpreadMeters = maxSpread,
-                    epochCount = req,
-                    isMockProvider = checkIsMock(loc)
-                )
-
-                val updated = _measurePoints.value + (slot to newPoint)
-                _measurePoints.value = updated
-                recalculateMeasurement(updated)
-
-                epochBuffer.clear()
-                _isSamplingEpochs.value = false
-                _samplingSlot.value = null
-                _currentEpochCount.value = 0
-            }
-        }
+        // 2. Station occupations (Measure)
+        MeasureRepository.onFix(loc, _isMockLocationActive.value)
 
         // 3. Path Following Guidance
         val session = _followSession.value
@@ -183,57 +124,6 @@ object SurveyRepository {
         _isRecordingPath.value = false
         _pathPoints.value = emptyList()
         _totalDistanceMeters.value = 0.0
-    }
-
-    // --- Measure Controls ---
-    fun setTargetEpochs(epochs: Int) {
-        _targetEpochs.value = epochs.coerceIn(1, 20)
-    }
-
-    fun startPointCapture(slot: MeasureSlot) {
-        epochBuffer.clear()
-        _currentEpochCount.value = 0
-        _samplingSlot.value = slot
-        _isSamplingEpochs.value = true
-    }
-
-    fun cancelPointCapture() {
-        _isSamplingEpochs.value = false
-        _samplingSlot.value = null
-        epochBuffer.clear()
-        _currentEpochCount.value = 0
-    }
-
-    fun clearMeasurement() {
-        _measurePoints.value = emptyMap()
-        _measurement.value = null
-        cancelPointCapture()
-    }
-
-    fun measureBetween(from: MeasurePoint, to: MeasurePoint): StraightLineMeasurement {
-        val distanceResult = FloatArray(2)
-        Location.distanceBetween(
-            from.latitude, from.longitude,
-            to.latitude, to.longitude,
-            distanceResult
-        )
-        val hDist = distanceResult[0].toDouble()
-        val bearing = (distanceResult[1].toDouble() + 360.0) % 360.0
-        val vDelta = to.altitude - from.altitude
-        return StraightLineMeasurement(
-            from = from,
-            to = to,
-            horizontalDistanceMeters = hDist,
-            slopeDistanceMeters = sqrt(hDist.pow(2) + vDelta.pow(2)),
-            verticalDeltaMeters = vDelta,
-            bearingDegrees = bearing
-        )
-    }
-
-    private fun recalculateMeasurement(points: Map<MeasureSlot, MeasurePoint>) {
-        val a = points[MeasureSlot.A]
-        val b = points[MeasureSlot.B]
-        _measurement.value = if (a != null && b != null) measureBetween(a, b) else null
     }
 
     // --- Feature & Area Survey Controls ---
@@ -441,69 +331,6 @@ object SurveyRepository {
             }
             features.put(lineFeature)
         }
-        root.put("features", features)
-        return root.toString(2)
-    }
-
-    fun exportMeasurementGeoJson(): String {
-        val root = JSONObject().apply { put("type", "FeatureCollection") }
-        val features = JSONArray()
-
-        for (pt in _measurePoints.value.values.sortedBy { it.name }) {
-            val ptFeature = JSONObject().apply {
-                put("type", "Feature")
-                put("properties", JSONObject().apply {
-                    put("name", pt.name)
-                    put("featureType", "MeasurePoint")
-                    put("altitude_m", "%.2f".format(pt.altitude))
-                    put("accuracy_m", "%.3f".format(pt.accuracy))
-                    put("epochSpread_m", "%.3f".format(pt.epochSpreadMeters))
-                    put("epochs", pt.epochCount)
-                    put("mockGnss", pt.isMockProvider)
-                })
-                put("geometry", JSONObject().apply {
-                    put("type", "Point")
-                    put("coordinates", JSONArray().apply {
-                        put(pt.longitude)
-                        put(pt.latitude)
-                        put(pt.altitude)
-                    })
-                })
-            }
-            features.put(ptFeature)
-        }
-
-        _measurement.value?.let { m ->
-            val lineFeature = JSONObject().apply {
-                put("type", "Feature")
-                put("properties", JSONObject().apply {
-                    put("featureType", "StraightLineMeasurement")
-                    put("from", m.from.name)
-                    put("to", m.to.name)
-                    put("horizontalDistance_m", "%.2f".format(m.horizontalDistanceMeters))
-                    put("slopeDistance_m", "%.2f".format(m.slopeDistanceMeters))
-                    put("verticalDelta_m", "%.2f".format(m.verticalDeltaMeters))
-                    put("bearing_deg", "%.1f".format(m.bearingDegrees))
-                })
-                put("geometry", JSONObject().apply {
-                    put("type", "LineString")
-                    put("coordinates", JSONArray().apply {
-                        put(JSONArray().apply {
-                            put(m.from.longitude)
-                            put(m.from.latitude)
-                            put(m.from.altitude)
-                        })
-                        put(JSONArray().apply {
-                            put(m.to.longitude)
-                            put(m.to.latitude)
-                            put(m.to.altitude)
-                        })
-                    })
-                })
-            }
-            features.put(lineFeature)
-        }
-
         root.put("features", features)
         return root.toString(2)
     }

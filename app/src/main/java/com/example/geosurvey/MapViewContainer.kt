@@ -1,7 +1,12 @@
 package com.example.geosurvey
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.location.Location
@@ -40,7 +45,10 @@ fun OsmMapView(
     modifier: Modifier = Modifier,
     currentLocation: Location?,
     pathPoints: List<Location>,
-    measurePoints: Map<MeasureSlot, MeasurePoint>,
+    stations: List<SurveyPoint>,
+    measureLines: List<MeasuredLine>,
+    originId: String?,
+    showMeasureGuide: Boolean,
     featurePoints: List<SurveyFeaturePoint>,
     importedOverlay: ImportedGeoJsonOverlay?,
     followSession: FollowSession?,
@@ -89,7 +97,10 @@ fun OsmMapView(
     LaunchedEffect(
         currentLocation,
         pathPoints.size,
-        measurePoints,
+        stations,
+        measureLines,
+        originId,
+        showMeasureGuide,
         featurePoints.size,
         importedOverlay,
         followSession
@@ -157,24 +168,58 @@ fun OsmMapView(
             mapView.overlays.add(polyline)
         }
 
-        // 4. Straight Line Measurement (Red)
-        val a = measurePoints[MeasureSlot.A]
-        val b = measurePoints[MeasureSlot.B]
-        if (a != null && b != null) {
-            val measureLine = Polyline().apply {
-                outlinePaint.color = Color.parseColor("#E53935")
-                outlinePaint.strokeWidth = 7f
-                setPoints(listOf(GeoPoint(a.latitude, a.longitude), GeoPoint(b.latitude, b.longitude)))
+        // 4. Measured Lines (SLA accent blue; linked lines dashed) with distance labels
+        val byId = stations.associateBy { it.id }
+        val showLabels = mapView.zoomLevelDouble >= 16.5
+        for (l in measureLines) {
+            val a = byId[l.fromId] ?: continue
+            val b = byId[l.toId] ?: continue
+            val active = l.fromId == originId || l.toId == originId
+            val line = Polyline().apply {
+                outlinePaint.color = Color.parseColor("#3DA9FC")
+                outlinePaint.alpha = if (active) 255 else 150
+                outlinePaint.strokeWidth = if (active) 8f else 6f
+                outlinePaint.strokeCap = Paint.Cap.ROUND
+                if (l.linked) outlinePaint.pathEffect = DashPathEffect(floatArrayOf(22f, 14f), 0f)
+                setPoints(listOf(GeoPoint(a.lat, a.lon), GeoPoint(b.lat, b.lon)))
             }
-            mapView.overlays.add(measureLine)
+            mapView.overlays.add(line)
+            if (showLabels) {
+                val label = Marker(mapView).apply {
+                    position = GeoPoint((a.lat + b.lat) / 2, (a.lon + b.lon) / 2)
+                    icon = distanceLabelIcon(context, "${"%.2f".format(l.distanceM)} m")
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    setOnMarkerClickListener { _, _ -> true }
+                }
+                mapView.overlays.add(label)
+            }
         }
 
-        // 5. Measure Point Markers
-        for (pt in measurePoints.values) {
+        // 4b. Live guide from origin to the current position (Measure tab)
+        val origin = byId[originId]
+        if (showMeasureGuide && origin != null && currentLocation != null) {
+            val guide = Polyline().apply {
+                outlinePaint.color = Color.parseColor("#3DA9FC")
+                outlinePaint.alpha = 200
+                outlinePaint.strokeWidth = 5f
+                outlinePaint.pathEffect = DashPathEffect(floatArrayOf(14f, 14f), 0f)
+                setPoints(listOf(GeoPoint(origin.lat, origin.lon), GeoPoint(currentLocation.latitude, currentLocation.longitude)))
+            }
+            mapView.overlays.add(guide)
+        }
+
+        // 5. Station markers: tap one to measure from it
+        for (st in stations) {
+            val isOrigin = st.id == originId
             val marker = Marker(mapView).apply {
-                position = GeoPoint(pt.latitude, pt.longitude)
-                title = "${pt.name} | Alt ${"%.1f".format(pt.altitude)}m (±${"%.2f".format(pt.accuracy)}m)"
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                position = GeoPoint(st.lat, st.lon)
+                val (drawable, anchorX) = stationIcon(context, st.name, if (isOrigin) "#34C759" else "#3DA9FC")
+                icon = drawable
+                setAnchor(anchorX, Marker.ANCHOR_CENTER)
+                setOnMarkerClickListener { _, _ ->
+                    MeasureRepository.setOrigin(st.id)
+                    true
+                }
             }
             mapView.overlays.add(marker)
         }
@@ -255,7 +300,7 @@ fun OsmMapView(
                 onClick = {
                     val allGeoPoints = mutableListOf<GeoPoint>()
                     allGeoPoints.addAll(pathPoints.map { GeoPoint(it.latitude, it.longitude) })
-                    allGeoPoints.addAll(measurePoints.values.map { GeoPoint(it.latitude, it.longitude) })
+                    allGeoPoints.addAll(stations.map { GeoPoint(it.lat, it.lon) })
                     allGeoPoints.addAll(featurePoints.map { GeoPoint(it.latitude, it.longitude) })
                     importedOverlay?.lines?.flatMap { it.points }?.forEach {
                         allGeoPoints.add(GeoPoint(it.lat, it.lon))
@@ -297,4 +342,53 @@ fun OsmMapView(
             }
         }
     }
+}
+
+/** Station dot with its name beside it (white text, dark halo). Returns the icon and the dot's x anchor (0..1). */
+private fun stationIcon(context: Context, name: String, fill: String): Pair<BitmapDrawable, Float> {
+    val d = context.resources.displayMetrics.density
+    val r = 7f * d
+    val stroke = 2f * d
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 12f * d
+        typeface = Typeface.DEFAULT_BOLD
+        setShadowLayer(3f * d, 0f, 0f, Color.BLACK)
+    }
+    val textW = textPaint.measureText(name)
+    val pad = 4f * d
+    val cx = r + stroke + pad
+    val w = (cx + r + stroke + 4f * d + textW + pad).toInt()
+    val h = (maxOf(2 * (r + stroke), textPaint.textSize * 1.4f) + 2 * pad).toInt()
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    val cy = h / 2f
+    c.drawCircle(cx, cy, r + stroke, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        setShadowLayer(2f * d, 0f, 1f * d, Color.argb(150, 0, 0, 0))
+    })
+    c.drawCircle(cx, cy, r, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor(fill) })
+    c.drawText(name, cx + r + stroke + 4f * d, cy + textPaint.textSize * 0.35f, textPaint)
+    return BitmapDrawable(context.resources, bmp) to cx / w
+}
+
+/** Small dark rounded label for a line's distance. */
+private fun distanceLabelIcon(context: Context, text: String): BitmapDrawable {
+    val d = context.resources.displayMetrics.density
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#E8ECEF")
+        textSize = 11f * d
+        typeface = Typeface.DEFAULT_BOLD
+    }
+    val padX = 6f * d
+    val padY = 3f * d
+    val w = (textPaint.measureText(text) + 2 * padX).toInt()
+    val h = (textPaint.textSize + 2 * padY).toInt()
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    c.drawRoundRect(RectF(0f, 0f, w.toFloat(), h.toFloat()), 6f * d, 6f * d, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(220, 27, 31, 36)
+    })
+    c.drawText(text, padX, padY + textPaint.textSize * 0.85f, textPaint)
+    return BitmapDrawable(context.resources, bmp)
 }
