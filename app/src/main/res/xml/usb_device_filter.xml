@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- USB devices that open GeoSurvey when plugged in: common GNSS receiver USB chips. -->
+<resources>
+    <!-- Any CDC-ACM (USB serial class) device, which most GNSS receivers use -->
+    <usb-device class="2" />
+    <!-- u-blox -->
+    <usb-device vendor-id="5446" />
+    <!-- FTDI -->
+    <usb-device vendor-id="1027" />
+    <!-- Silicon Labs CP210x -->
+    <usb-device vendor-id="4292" />
+    <!-- WCH CH34x -->
+    <usb-device vendor-id="6790" />
+    <!-- Prolific PL2303 -->
+    <usb-device vendor-id="1659" />
+    <!-- STMicroelectronics virtual COM -->
+    <usb-device vendor-id="1155" />
+    <!-- Quectel -->
+    <usb-device vendor-id="11388" />
+</resources>

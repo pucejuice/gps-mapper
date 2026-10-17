@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.view.WindowManager
 import android.widget.Toast
@@ -75,6 +77,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val settings = getSharedPreferences("geosurvey_settings", MODE_PRIVATE)
         MeasureRepository.attach(this)
+        ReceiverBridge.attach(this)
+        handleUsbAttach(intent)
         setContent {
             var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", true)) }
             var mapStyle by remember {
@@ -108,6 +112,21 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleUsbAttach(intent)
+    }
+
+    /** Opened by plugging in a GNSS receiver (see res/xml/usb_device_filter.xml): connect to it. */
+    private fun handleUsbAttach(intent: Intent?) {
+        if (intent?.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+        @Suppress("DEPRECATION")
+        val device: UsbDevice? = if (Build.VERSION.SDK_INT >= 33)
+            intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        else intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        device?.let { ReceiverBridge.onUsbAttached(this, it) }
     }
 
     // GPS runs while the app is on screen. When it leaves the screen the service stops
@@ -202,6 +221,8 @@ fun MainScreen(
     var showMenu by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showRecords by remember { mutableStateOf(false) }
+    var showReceiver by remember { mutableStateOf(false) }
+    val receiverQuality by SurveyRepository.receiverQuality.collectAsState()
 
     // Status bar matches the Voronoi top bar; navigation bar matches the bottom panel
     val view = LocalView.current
@@ -233,6 +254,7 @@ fun MainScreen(
 
     occupation?.let { OccupationOverlay(it) }
     if (showRecords) RecordsSheet(onDismiss = { showRecords = false })
+    if (showReceiver) ReceiverDialog(onDismiss = { showReceiver = false })
 
     if (showSettings) {
         SettingsDialog(
@@ -271,9 +293,16 @@ fun MainScreen(
                             acc <= 3.0f -> Color(0xFFE65100)  // DGPS
                             else -> Color(0xFFC62828)
                         }
-                        Surface(shape = MaterialTheme.shapes.small, color = badgeColor) {
+                        // Source: built-in receiver shows its fix type (RTK/FLOAT/DGPS…),
+                        // another app's mock feed shows EXT, the phone's own GPS shows GPS.
+                        val source = receiverQuality?.short ?: if (isMockActive) "EXT" else "GPS"
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = if (receiverQuality != null) fixQualityColor(receiverQuality) else badgeColor,
+                            onClick = { showReceiver = true }
+                        ) {
                             Text(
-                                text = "${if (isMockActive) "EXT" else "GPS"} ±${"%.2f".format(acc)}m",
+                                text = "$source ±${"%.2f".format(acc)}m",
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
@@ -307,6 +336,14 @@ fun MainScreen(
                                     }
                                 )
                             }
+                            DropdownMenuItem(
+                                text = { Text("GNSS receiver") },
+                                leadingIcon = { Icon(Icons.Default.SatelliteAlt, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    showReceiver = true
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Settings") },
                                 leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },

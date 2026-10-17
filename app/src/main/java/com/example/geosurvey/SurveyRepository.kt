@@ -20,7 +20,8 @@ enum class BackgroundTask(val label: String) {
     IDLE(""),
     HOLDING("Holding station"),
     RECORDING("Recording path"),
-    FOLLOWING("Following path")
+    FOLLOWING("Following path"),
+    RECEIVER("Receiver connected")
 }
 
 object SurveyRepository {
@@ -82,21 +83,28 @@ object SurveyRepository {
     private var follower: PathFollower? = null
 
     val backgroundTask: StateFlow<BackgroundTask> = combine(
-        _isRecordingPath, _followSession, MeasureRepository.occupation
-    ) { recording, follow, occupation ->
+        _isRecordingPath, _followSession, MeasureRepository.occupation, ReceiverBridge.state
+    ) { recording, follow, occupation, receiver ->
         when {
             occupation != null -> BackgroundTask.HOLDING
             recording -> BackgroundTask.RECORDING
             follow != null -> BackgroundTask.FOLLOWING
+            // A connected receiver keeps running so other apps can use it as their location
+            receiver is ReceiverBridge.State.Connected -> BackgroundTask.RECEIVER
             else -> BackgroundTask.IDLE
         }
     }.stateIn(scope, SharingStarted.Eagerly, BackgroundTask.IDLE)
+
+    /** Fix quality of the built-in receiver bridge's latest fix, or null when the phone's GPS is the source. */
+    private val _receiverQuality = MutableStateFlow<FixQuality?>(null)
+    val receiverQuality = _receiverQuality.asStateFlow()
 
     /** "Stop GPS" from the notification: end anything that keeps GPS on in the background. */
     fun stopBackgroundWork() {
         stopPathRecording()
         stopFollowing()
         if (MeasureRepository.occupation.value != null) MeasureRepository.cancelStation()
+        ReceiverBridge.disconnect()
     }
 
     @Suppress("DEPRECATION")
@@ -108,9 +116,24 @@ object SurveyRepository {
         }
     }
 
+    /** Location from the phone's fused provider (phone GPS, or another app's mock feed). */
     fun onNewLocation(loc: Location) {
+        // While the built-in receiver bridge is feeding, it is the only source
+        // (fused updates would be our own mock copies or the weaker phone GPS).
+        if (ReceiverBridge.isFeeding()) return
+        _receiverQuality.value = null
+        process(loc, checkIsMock(loc))
+    }
+
+    /** Location from the built-in receiver bridge. */
+    fun onExternalFix(loc: Location, fix: ReceiverFix) {
+        _receiverQuality.value = fix.quality
+        process(loc, isExternal = true)
+    }
+
+    private fun process(loc: Location, isExternal: Boolean) {
         _currentLocation.value = loc
-        _isMockLocationActive.value = checkIsMock(loc)
+        _isMockLocationActive.value = isExternal
 
         // 1. Continuous Path Recording
         if (_isRecordingPath.value) {

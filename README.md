@@ -36,7 +36,15 @@ A GNSS survey, path recording, distance measurement and path-following app for A
    - The map recentres on you, highlights the followed line in orange and draws a dashed guide line; the screen stays awake while following.
    - Handles out-and-back and looping routes by keeping track of progress along the path.
 
-5. **Field & Map Utilities**
+5. **GNSS receiver bridge** (☰ › GNSS receiver, or tap the status badge)
+   - Connects to an external receiver by **USB cable** (CDC-ACM, FTDI, CP210x, CH34x, PL2303 — via an OTG cable; plugging it in offers to open GeoSurvey and connects automatically) or **Bluetooth** (paired SPP receivers).
+   - Reads NMEA **GGA** (position, fix type, satellites, HDOP, MSL height + geoid separation), **RMC** (speed, course) and **GST** (position standard deviations → accuracy; otherwise estimated from HDOP and fix type). Checksums are verified.
+   - Receiver fixes go straight into GeoSurvey (badge shows **RTK / FLOAT / DGPS / GNSS** ±accuracy); phone GPS is ignored while the receiver is feeding.
+   - **Share as phone location**: select GeoSurvey in *Developer options › Select mock location app* and the receiver's position is published as the phone's location (GPS test provider + fused provider), so other apps use it too. Only one app can be the mock location app, so this replaces a separate bridge app.
+   - While connected, the receiver keeps running in the background (notification with **Stop GPS**).
+   - RTK corrections are not handled by GeoSurvey (no NTRIP client yet): the receiver needs its own correction source to reach RTK fixed.
+
+6. **Field & Map Utilities**
    - **GNSS status badge:** `EXT` for external (mock) receiver coordinates or `GPS` for the phone's own GPS, with horizontal accuracy, coloured green (RTK) / blue (sub-metre) / orange / red.
    - **Map-first layout:** the map fills the screen; each mode has a compact two-row control panel above the mode tabs at the bottom. Save / Share / Clear live behind a single save button.
    - **☰ Menu:** load or remove a GeoJSON overlay, and **Settings** (dark/light theme, path accuracy gate, station hold time / epochs / gate, record height).

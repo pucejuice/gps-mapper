@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.geosurvey"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.4"
+        versionCode = 8
+        versionName = "1.5"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -67,6 +67,9 @@ dependencies {
 
     // OpenStreetMap (osmdroid)
     implementation("org.osmdroid:osmdroid-android:6.1.18")
+
+    // USB serial drivers (CDC-ACM, FTDI, CP210x, CH34x, PL2303) for USB GNSS receivers
+    implementation("com.github.mik3y:usb-serial-for-android:3.8.1")
 
     testImplementation("junit:junit:4.13.2")
 }
