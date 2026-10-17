@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.geosurvey"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -66,4 +66,6 @@ dependencies {
 
     // OpenStreetMap (osmdroid)
     implementation("org.osmdroid:osmdroid-android:6.1.18")
+
+    testImplementation("junit:junit:4.13.2")
 }

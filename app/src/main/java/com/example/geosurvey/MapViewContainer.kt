@@ -2,6 +2,7 @@ package com.example.geosurvey
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.location.Location
 import androidx.compose.foundation.layout.*
@@ -34,10 +35,10 @@ fun OsmMapView(
     modifier: Modifier = Modifier,
     currentLocation: Location?,
     pathPoints: List<Location>,
-    stations: List<SurveyStation>,
-    sightLines: List<SightLineResult>,
+    measurePoints: Map<MeasureSlot, MeasurePoint>,
     featurePoints: List<SurveyFeaturePoint>,
-    importedOverlay: ImportedGeoJsonOverlay?
+    importedOverlay: ImportedGeoJsonOverlay?,
+    followSession: FollowSession?
 ) {
     val context = LocalContext.current
     var useTopoTiles by remember { mutableStateOf(false) }
@@ -66,20 +67,21 @@ fun OsmMapView(
     LaunchedEffect(
         currentLocation,
         pathPoints.size,
-        stations.size,
-        sightLines.size,
+        measurePoints,
         featurePoints.size,
-        importedOverlay
+        importedOverlay,
+        followSession
     ) {
         mapView.overlays.clear()
 
         // 1. Imported GeoJSON Overlay (Purple)
         importedOverlay?.let { overlay ->
-            for (line in overlay.polylines) {
+            overlay.lines.forEachIndexed { index, line ->
+                val isFollowed = followSession?.lineIndex == index
                 val poly = Polyline().apply {
-                    outlinePaint.color = Color.parseColor("#8E24AA")
-                    outlinePaint.strokeWidth = 6f
-                    setPoints(line.map { GeoPoint(it.first, it.second) })
+                    outlinePaint.color = Color.parseColor(if (isFollowed) "#FB8C00" else "#8E24AA")
+                    outlinePaint.strokeWidth = if (isFollowed) 12f else 6f
+                    setPoints(line.points.map { GeoPoint(it.lat, it.lon) })
                 }
                 mapView.overlays.add(poly)
             }
@@ -133,29 +135,51 @@ fun OsmMapView(
             mapView.overlays.add(polyline)
         }
 
-        // 4. Sight Line Vectors (Red)
-        for (line in sightLines) {
-            val sightPoly = Polyline().apply {
+        // 4. Straight Line Measurement (Red)
+        val a = measurePoints[MeasureSlot.A]
+        val b = measurePoints[MeasureSlot.B]
+        if (a != null && b != null) {
+            val measureLine = Polyline().apply {
                 outlinePaint.color = Color.parseColor("#E53935")
                 outlinePaint.strokeWidth = 7f
-                setPoints(
-                    listOf(
-                        GeoPoint(line.fromStation.latitude, line.fromStation.longitude),
-                        GeoPoint(line.toStation.latitude, line.toStation.longitude)
-                    )
-                )
+                setPoints(listOf(GeoPoint(a.latitude, a.longitude), GeoPoint(b.latitude, b.longitude)))
             }
-            mapView.overlays.add(sightPoly)
+            mapView.overlays.add(measureLine)
         }
 
-        // 5. SLA Station Markers
-        for (st in stations) {
+        // 5. Measure Point Markers
+        for (pt in measurePoints.values) {
             val marker = Marker(mapView).apply {
-                position = GeoPoint(st.latitude, st.longitude)
-                title = "${st.name} | Alt ${"%.1f".format(st.altitude)}m (±${"%.2f".format(st.accuracy)}m)"
+                position = GeoPoint(pt.latitude, pt.longitude)
+                title = "${pt.name} | Alt ${"%.1f".format(pt.altitude)}m (±${"%.2f".format(pt.accuracy)}m)"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             }
             mapView.overlays.add(marker)
+        }
+
+        // 5b. Follow Guidance: dashed line from live fix to the look-ahead target
+        val guidance = followSession?.guidance
+        if (guidance != null && currentLocation != null && !guidance.arrived) {
+            val guideLine = Polyline().apply {
+                outlinePaint.color = Color.parseColor("#E65100")
+                outlinePaint.strokeWidth = 5f
+                outlinePaint.pathEffect = DashPathEffect(floatArrayOf(18f, 12f), 0f)
+                setPoints(
+                    listOf(
+                        GeoPoint(currentLocation.latitude, currentLocation.longitude),
+                        GeoPoint(guidance.target.lat, guidance.target.lon)
+                    )
+                )
+            }
+            mapView.overlays.add(guideLine)
+        }
+        followSession?.path?.lastOrNull()?.let { end ->
+            val endMarker = Marker(mapView).apply {
+                position = GeoPoint(end.lat, end.lon)
+                title = "Path end"
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            }
+            mapView.overlays.add(endMarker)
         }
 
         // 6. Live GNSS Location
@@ -168,7 +192,7 @@ fun OsmMapView(
             }
             mapView.overlays.add(liveMarker)
 
-            if (!hasAutoCentered) {
+            if (!hasAutoCentered || followSession != null) {
                 mapView.controller.setCenter(curPoint)
                 hasAutoCentered = true
             }
@@ -206,10 +230,10 @@ fun OsmMapView(
                 onClick = {
                     val allGeoPoints = mutableListOf<GeoPoint>()
                     allGeoPoints.addAll(pathPoints.map { GeoPoint(it.latitude, it.longitude) })
-                    allGeoPoints.addAll(stations.map { GeoPoint(it.latitude, it.longitude) })
+                    allGeoPoints.addAll(measurePoints.values.map { GeoPoint(it.latitude, it.longitude) })
                     allGeoPoints.addAll(featurePoints.map { GeoPoint(it.latitude, it.longitude) })
-                    importedOverlay?.polylines?.flatten()?.forEach {
-                        allGeoPoints.add(GeoPoint(it.first, it.second))
+                    importedOverlay?.lines?.flatMap { it.points }?.forEach {
+                        allGeoPoints.add(GeoPoint(it.lat, it.lon))
                     }
                     if (allGeoPoints.size >= 2) {
                         val box = BoundingBox.fromGeoPoints(allGeoPoints)

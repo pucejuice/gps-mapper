@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "**" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
@@ -26,6 +26,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.7'
+
+      - name: Run Unit Tests
+        run: gradle testDebugUnitTest --no-daemon --stacktrace
 
       - name: Build Debug APK
         run: gradle assembleDebug --no-daemon --stacktrace

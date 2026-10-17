@@ -1,11 +1,13 @@
 package com.example.geosurvey
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -147,8 +149,9 @@ fun MainScreen(
     val totalDistance by SurveyRepository.totalDistanceMeters.collectAsState()
     val maxAccuracyFilter by SurveyRepository.maxAccuracyFilterMeters.collectAsState()
 
-    val stations by SurveyRepository.stations.collectAsState()
-    val sightLines by SurveyRepository.sightLines.collectAsState()
+    val measurePoints by SurveyRepository.measurePoints.collectAsState()
+    val measurement by SurveyRepository.measurement.collectAsState()
+    val samplingSlot by SurveyRepository.samplingSlot.collectAsState()
     val isSamplingEpochs by SurveyRepository.isSamplingEpochs.collectAsState()
     val currentEpochCount by SurveyRepository.currentEpochCount.collectAsState()
     val targetEpochs by SurveyRepository.targetEpochs.collectAsState()
@@ -158,21 +161,18 @@ fun MainScreen(
     val polygonPerimeterM by SurveyRepository.polygonPerimeterMeters.collectAsState()
 
     val importedOverlay by SurveyRepository.importedOverlay.collectAsState()
+    val followSession by SurveyRepository.followSession.collectAsState()
 
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Path, 1 = SLA, 2 = Features/Area
-    var selectedStationPreset by remember { mutableStateOf("Station A (Driveway)") }
-    var selectedSpeedZoneKmh by remember { mutableStateOf(50) } // AS/NZS 2890.1 reference speed
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Path, 1 = Measure, 2 = Features/Area, 3 = Follow
     var selectedFeatureCategory by remember { mutableStateOf("Kerb/Edge") }
     var customFeatureNote by remember { mutableStateOf("") }
 
-    // AS 2890.1 / Austroads Minimum Sight Distance lookup (meters)
-    val requiredSightDistanceMeters = when (selectedSpeedZoneKmh) {
-        40 -> 35.0
-        50 -> 45.0
-        60 -> 65.0
-        70 -> 85.0
-        80 -> 105.0
-        else -> 45.0
+    // Keep the screen awake while following a path
+    val isFollowing = followSession != null
+    DisposableEffect(isFollowing) {
+        val window = (context as? Activity)?.window
+        if (isFollowing) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
     Scaffold(
@@ -238,7 +238,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // 3-Mode Navigation Tabs
+            // Mode Navigation Tabs
             TabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
@@ -249,14 +249,20 @@ fun MainScreen(
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Sight Lines", fontSize = 13.sp) },
+                    text = { Text("Measure", fontSize = 13.sp) },
                     icon = { Icon(Icons.Default.Straighten, contentDescription = null) }
                 )
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("Area / Survey", fontSize = 13.sp) },
+                    text = { Text("Area", fontSize = 13.sp) },
                     icon = { Icon(Icons.Default.SquareFoot, contentDescription = null) }
+                )
+                Tab(
+                    selected = selectedTab == 3,
+                    onClick = { selectedTab = 3 },
+                    text = { Text("Follow", fontSize = 13.sp) },
+                    icon = { Icon(Icons.Default.Navigation, contentDescription = null) }
                 )
             }
 
@@ -270,10 +276,10 @@ fun MainScreen(
                     modifier = Modifier.fillMaxSize(),
                     currentLocation = curLocation,
                     pathPoints = pathPoints,
-                    stations = stations,
-                    sightLines = sightLines,
+                    measurePoints = measurePoints,
                     featurePoints = featurePoints,
-                    importedOverlay = importedOverlay
+                    importedOverlay = importedOverlay,
+                    followSession = followSession
                 )
 
                 // Banner if an external GeoJSON overlay is active
@@ -471,7 +477,7 @@ fun MainScreen(
                     }
 
                     // ==========================================
-                    // TAB 1: SIGHT LINE ANALYSIS (SLA)
+                    // TAB 1: STRAIGHT LINE MEASUREMENT
                     // ==========================================
                     1 -> {
                         LazyColumn(
@@ -487,7 +493,7 @@ fun MainScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        "Driveway Sight Line Survey",
+                                        "Straight Line Measure",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 15.sp
                                     )
@@ -504,50 +510,7 @@ fun MainScreen(
                                 }
                             }
 
-                            // AS/NZS 2890.1 Speed Zone Target Selector
-                            item {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState())
-                                ) {
-                                    Text("Speed Zone:", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                                    listOf(40, 50, 60, 70, 80).forEach { spd ->
-                                        FilterChip(
-                                            selected = selectedSpeedZoneKmh == spd,
-                                            onClick = { selectedSpeedZoneKmh = spd },
-                                            label = { Text("${spd}km/h", fontSize = 11.sp) }
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Station Selector Chips
-                            item {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    listOf(
-                                        "Station A (Driveway)",
-                                        "Station B (Left Sight)",
-                                        "Station C (Right Sight)",
-                                        "Station D (Target)"
-                                    ).forEach { preset ->
-                                        FilterChip(
-                                            selected = selectedStationPreset == preset,
-                                            onClick = { selectedStationPreset = preset },
-                                            label = { Text(preset, fontSize = 11.sp) }
-                                        )
-                                    }
-                                }
-                            }
-
-                            // Capture Station Button / Progress
+                            // Capture Point A / Point B (or sampling progress)
                             item {
                                 if (isSamplingEpochs) {
                                     Card(
@@ -561,7 +524,7 @@ fun MainScreen(
                                             horizontalAlignment = Alignment.CenterHorizontally
                                         ) {
                                             Text(
-                                                "Hold Stationary: Sampling Epoch ($currentEpochCount/$targetEpochs)...",
+                                                "Hold Stationary: ${samplingSlot?.label ?: ""} epoch ($currentEpochCount/$targetEpochs)...",
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontSize = 13.sp
                                             )
@@ -570,99 +533,78 @@ fun MainScreen(
                                                 progress = currentEpochCount.toFloat() / targetEpochs.toFloat(),
                                                 modifier = Modifier.fillMaxWidth()
                                             )
+                                            TextButton(onClick = { SurveyRepository.cancelPointCapture() }) {
+                                                Text("Cancel")
+                                            }
                                         }
                                     }
                                 } else {
-                                    Button(
-                                        onClick = { SurveyRepository.startStationCapture(selectedStationPreset) },
-                                        modifier = Modifier.fillMaxWidth()
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(Icons.Default.MyLocation, contentDescription = null)
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Capture $selectedStationPreset ($targetEpochs Epochs)")
-                                    }
-                                }
-                            }
-
-                            // Calculated Sight Line Results
-                            if (sightLines.isNotEmpty()) {
-                                item {
-                                    Text(
-                                        "Sight Line Vectors (Min Req @ ${selectedSpeedZoneKmh}km/h: ${requiredSightDistanceMeters.toInt()}m)",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                                items(sightLines) { line ->
-                                    val passesStandard = line.horizontalDistanceMeters >= requiredSightDistanceMeters
-                                    Card(
-                                        colors = CardDefaults.cardColors(
-                                            containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.padding(10.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
+                                        MeasureSlot.values().forEach { slot ->
+                                            val captured = measurePoints.containsKey(slot)
+                                            Button(
+                                                onClick = { SurveyRepository.startPointCapture(slot) },
+                                                enabled = curLocation != null,
+                                                modifier = Modifier.weight(1f)
                                             ) {
-                                                Text(
-                                                    "${line.fromStation.name} ➔ ${line.toStation.name}",
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 13.sp
-                                                )
-                                                Surface(
-                                                    color = if (passesStandard) Color(0xFF2E7D32) else Color(0xFFC62828),
-                                                    shape = MaterialTheme.shapes.extraSmall
-                                                ) {
-                                                    Text(
-                                                        text = if (passesStandard) "PASS (≥${requiredSightDistanceMeters.toInt()}m)" else "SHORT (<${requiredSightDistanceMeters.toInt()}m)",
-                                                        color = Color.White,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                    )
-                                                }
-                                            }
-                                            Spacer(Modifier.height(4.dp))
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text("2D Dist: ${"%.2f".format(line.horizontalDistanceMeters)} m", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                                Text("3D Slope: ${"%.2f".format(line.slopeDistanceMeters)} m", fontSize = 12.sp)
-                                            }
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text("Grade: ${"%.1f".format(line.gradePercent)}% (Δh ${"%.2f".format(line.verticalDeltaMeters)}m)", fontSize = 12.sp)
-                                                Text("Bearing: ${"%.1f".format(line.bearingDegrees)}°", fontSize = 12.sp)
+                                                Icon(Icons.Default.MyLocation, contentDescription = null)
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(if (captured) "Re-capture ${slot.name}" else "Capture ${slot.label}")
                                             }
                                         }
                                     }
                                 }
                             }
 
-                            // Captured Stations List
-                            if (stations.isNotEmpty()) {
+                            // Measured result A -> B
+                            measurement?.let { m ->
                                 item {
-                                    Text("Averaged Stations (${stations.size})", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    MeasurementCard(title = "Point A ➔ Point B", m = m)
                                 }
-                                items(stations) { st ->
-                                    Card(modifier = Modifier.fillMaxWidth()) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(8.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(st.name, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                                            Text(
-                                                "Alt ${"%.1f".format(st.altitude)}m | Spread ±${"%.2f".format(st.epochSpreadMeters)}m",
-                                                fontSize = 11.sp
-                                            )
+                            }
+
+                            // Live distance from Point A to the current position
+                            val pointA = measurePoints[MeasureSlot.A]
+                            val live = curLocation
+                            if (pointA != null && live != null) {
+                                item {
+                                    val livePoint = MeasurePoint(
+                                        name = "Current position",
+                                        latitude = live.latitude,
+                                        longitude = live.longitude,
+                                        altitude = live.altitude,
+                                        accuracy = live.accuracy
+                                    )
+                                    MeasurementCard(
+                                        title = "Point A ➔ Current position (live)",
+                                        m = SurveyRepository.measureBetween(pointA, livePoint)
+                                    )
+                                }
+                            }
+
+                            // Captured Points List
+                            if (measurePoints.isNotEmpty()) {
+                                item {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("Averaged Points (${measurePoints.size})", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        measurePoints.values.sortedBy { it.name }.forEach { pt ->
+                                            Card(modifier = Modifier.fillMaxWidth()) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(8.dp),
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Text(pt.name, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                                    Text(
+                                                        "Alt ${"%.1f".format(pt.altitude)}m | ±${"%.2f".format(pt.accuracy)}m | Spread ±${"%.2f".format(pt.epochSpreadMeters)}m",
+                                                        fontSize = 11.sp
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -676,22 +618,22 @@ fun MainScreen(
                                 ) {
                                     Button(
                                         onClick = {
-                                            val json = SurveyRepository.exportSlaGeoJson()
-                                            onSaveGeoJson(json, "sight_lines_${System.currentTimeMillis() / 1000}.geojson")
+                                            val json = SurveyRepository.exportMeasurementGeoJson()
+                                            onSaveGeoJson(json, "measurement_${System.currentTimeMillis() / 1000}.geojson")
                                         },
-                                        enabled = stations.isNotEmpty(),
+                                        enabled = measurePoints.isNotEmpty(),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Icon(Icons.Default.Save, contentDescription = null)
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Save SLA")
+                                        Text("Save")
                                     }
                                     OutlinedButton(
                                         onClick = {
-                                            val json = SurveyRepository.exportSlaGeoJson()
-                                            onShareGeoJson(json, "driveway_sight_lines.geojson")
+                                            val json = SurveyRepository.exportMeasurementGeoJson()
+                                            onShareGeoJson(json, "measurement.geojson")
                                         },
-                                        enabled = stations.isNotEmpty(),
+                                        enabled = measurePoints.isNotEmpty(),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Icon(Icons.Default.Share, contentDescription = null)
@@ -699,8 +641,8 @@ fun MainScreen(
                                         Text("Share")
                                     }
                                     OutlinedButton(
-                                        onClick = { SurveyRepository.clearStations() },
-                                        enabled = stations.isNotEmpty(),
+                                        onClick = { SurveyRepository.clearMeasurement() },
+                                        enabled = measurePoints.isNotEmpty(),
                                         modifier = Modifier.weight(0.8f)
                                     ) {
                                         Text("Reset")
@@ -857,7 +799,47 @@ fun MainScreen(
                             }
                         }
                     }
+
+                    // ==========================================
+                    // TAB 3: FOLLOW IMPORTED PATH
+                    // ==========================================
+                    3 -> {
+                        FollowPanel(
+                            overlay = importedOverlay,
+                            followSession = followSession,
+                            currentLocation = curLocation
+                        )
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MeasurementCard(title: String, m: StraightLineMeasurement) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Horizontal: ${"%.2f".format(m.horizontalDistanceMeters)} m", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text("Slope: ${"%.2f".format(m.slopeDistanceMeters)} m", fontSize = 12.sp)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Δh: ${"%+.2f".format(m.verticalDeltaMeters)} m", fontSize = 12.sp)
+                Text("Bearing: ${"%.1f".format(m.bearingDegrees)}°", fontSize = 12.sp)
             }
         }
     }

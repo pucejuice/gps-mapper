@@ -1,52 +1,42 @@
-# GeoSurvey GNSS & SLA (Android)
+# GeoSurvey GNSS (Android)
 
-A 3-mode GNSS survey, path recording, and driveway sight line analysis application built for Android with external high-accuracy GNSS receivers (such as Quescan) via Mock Location.
+A GNSS survey, path recording, distance measurement and path-following app for Android, built for use with external high-accuracy GNSS receivers (such as Quescan) via Mock Location.
 
-## Survey Modes & Features
+## Modes & Features
 
-1. **Path Tracker Mode (`supreme-funicular` parity + enhancements):**
-   - Continuous background GNSS logging via an Android `ForegroundService` (keeps recording with the screen locked in your pocket).
+1. **Path** – record a track
+   - Continuous background GNSS logging via an Android `ForegroundService` (keeps recording with the screen locked).
    - Live cumulative distance (m / km), logged point counter, elevation, and ground speed (km/h).
-   - Selectable **Accuracy Gate** (`≤0.5m RTK`, `≤2.0m`, or `All`) to automatically reject multipath outliers.
+   - Selectable **Accuracy Gate** (`≤0.5m RTK`, `≤2.0m`, or `All`) to reject multipath outliers.
    - **Undo Last Point**, **Pause/Resume**, and direct `.geojson` saving or sharing.
 
-2. **Driveway Sight Line Analysis (SLA) Mode:**
-   - Configurable **4-epoch or 10-epoch stationary averaging** with horizontal spread (`±m` jitter) reporting.
-   - Captures **Station A (Driveway Driver Eye)** and **Stations B, C, D (Approaching Sight Targets)**.
-   - Automatically calculates **2D Horizontal Sight Distance**, **3D Slope Distance**, **Elevation Delta ($\Delta h$)**, **Road Grade (%)**, and **True Bearing (°)**.
-   - Built-in **AS/NZS 2890.1 / Austroads Sight Distance Checker** for 40, 50, 60, 70, and 80 km/h speed zones with instant `PASS` / `SHORT` badges.
+2. **Measure** – straight line distance between two points
+   - Capture **Point A** and **Point B**, each averaged over 4 or 10 stationary epochs, with horizontal spread (`±m`) reported.
+   - Reports **horizontal distance**, **slope distance**, **height difference (Δh)** and **true bearing** A → B.
+   - Live distance from Point A to your current position.
+   - Raw measurements only: no design standards, minimum distances or pass/fail checks are applied.
 
-3. **Feature & Area Survey Mode:**
+3. **Area** – feature & area survey
    - One-tap point feature logging with preset tags (`Kerb/Edge`, `Boundary`, `Pit/Drain`, `Power/Util`, `Tree`, `Sign/Post`) and custom notes.
-   - Real-time **Geodesic Polygon Area** ($\text{m}^2$ and hectares) and **Perimeter** calculation using local tangent plane (ENU) projection.
-   - Exports both tagged `Point` features and the closed `Polygon` boundary into a single GeoJSON `FeatureCollection`.
+   - Real-time polygon **area** (m² / ha) and **perimeter** using a local tangent plane (ENU) projection.
+   - Exports tagged `Point` features and the closed `Polygon` boundary in one GeoJSON `FeatureCollection`.
 
-4. **Field & Map Utilities:**
-   - **Mock GNSS Source Verification:** Top-bar badge displays `EXT GNSS` (Teal) when receiving external mock coordinates from your Quescan bridge app versus `PHONE GPS` (Orange) if the external receiver disconnects.
-   - **GeoJSON Overlay Import:** Load existing `.geojson` files onto the map for reference in the field.
-   - **Floating Map Controls:** Center on GNSS fix, Fit to Survey Bounds, and switch between Standard OpenStreetMap and Topographic (`OpenTopo`) map layers.
+4. **Follow** – navigate along a loaded GeoJSON path
+   - Load a `.geojson` (folder button, top bar) containing a `LineString`, `MultiLineString` or polygon.
+   - Pick the line and direction (Start → End or End → Start), then **Start Following**.
+   - A large **direction arrow** points to a target a few metres further along the path, so it steers you back onto the line if you drift. Instructions: *Straight ahead / Bear / Turn left or right / Turn around*.
+   - Shows **distance left/right of path**, **remaining**, **covered** and **total** distance with a progress bar, and announces arrival at the end.
+   - Heading comes from the GPS course when moving (≥1.5 m/s) and from the phone compass (corrected for magnetic declination) when walking slowly or standing still.
+   - The map recentres on you, highlights the followed line in orange and draws a dashed guide line; the screen stays awake while following.
+   - Handles out-and-back and looping routes by keeping track of progress along the path.
 
----
+5. **Field & Map Utilities**
+   - **Mock GNSS Source Verification:** top-bar badge shows `EXT GNSS` (teal) for external mock coordinates or `PHONE GPS` (orange) if the external receiver disconnects.
+   - **GeoJSON Overlay Import** for reference in the field.
+   - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and switch between OpenStreetMap and OpenTopo layers.
 
-## Instructions for Cloud Agent / Automated Setup
+## Build
 
-If an automated cloud agent (Devin, Cursor, Copilot Workspace, Claude, etc.) is setting up this repository:
+GitHub Actions (`.github/workflows/build.yml`) runs the unit tests and builds a debug APK on every push (or manually via `workflow_dispatch`). Download the `GeoSurvey-Debug-APK` artifact from the workflow run and install `app-debug.apk` on the phone (allow installs from unknown sources).
 
-1. **Initialize Git Repository:**
-   ```bash
-   git init -b main
-   git add .
-   git commit -m "Initial commit: GeoSurvey 3-mode GNSS Android app with GitHub Actions"
-   ```
-
-2. **Push to Remote GitHub Repository:**
-   ```bash
-   gh repo create geosurvey-sla --public --source=. --remote=origin --push
-   # OR link an existing remote URL:
-   git remote add origin <GITHUB_REPO_URL>
-   git push -u origin main
-   ```
-
-3. **Verify GitHub Actions Build:**
-   - `.github/workflows/build.yml` runs automatically on push to `main` (or via manual `workflow_dispatch`).
-   - Once completed (~2 minutes), download the `GeoSurvey-Debug-APK` artifact containing `app-debug.apk`.
+Locally: `gradle testDebugUnitTest assembleDebug` with JDK 17 and the Android SDK.

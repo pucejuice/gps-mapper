@@ -30,12 +30,12 @@ object SurveyRepository {
     private val _maxAccuracyFilterMeters = MutableStateFlow(5.0f)
     val maxAccuracyFilterMeters = _maxAccuracyFilterMeters.asStateFlow()
 
-    // --- Mode 2: Sight Line Analysis (SLA) State ---
-    private val _stations = MutableStateFlow<List<SurveyStation>>(emptyList())
-    val stations = _stations.asStateFlow()
+    // --- Mode 2: Straight Line Measurement State ---
+    private val _measurePoints = MutableStateFlow<Map<MeasureSlot, MeasurePoint>>(emptyMap())
+    val measurePoints = _measurePoints.asStateFlow()
 
-    private val _sightLines = MutableStateFlow<List<SightLineResult>>(emptyList())
-    val sightLines = _sightLines.asStateFlow()
+    private val _measurement = MutableStateFlow<StraightLineMeasurement?>(null)
+    val measurement = _measurement.asStateFlow()
 
     private val _isSamplingEpochs = MutableStateFlow(false)
     val isSamplingEpochs = _isSamplingEpochs.asStateFlow()
@@ -46,8 +46,10 @@ object SurveyRepository {
     private val _targetEpochs = MutableStateFlow(4)
     val targetEpochs = _targetEpochs.asStateFlow()
 
+    private val _samplingSlot = MutableStateFlow<MeasureSlot?>(null)
+    val samplingSlot = _samplingSlot.asStateFlow()
+
     private val epochBuffer = mutableListOf<Location>()
-    private var pendingStationName: String = ""
 
     // --- Mode 3: Feature & Area Survey State ---
     private val _featurePoints = MutableStateFlow<List<SurveyFeaturePoint>>(emptyList())
@@ -62,6 +64,12 @@ object SurveyRepository {
     // --- Imported GeoJSON Overlay ---
     private val _importedOverlay = MutableStateFlow<ImportedGeoJsonOverlay?>(null)
     val importedOverlay = _importedOverlay.asStateFlow()
+
+    // --- Mode 4: Follow Imported Path ---
+    private val _followSession = MutableStateFlow<FollowSession?>(null)
+    val followSession = _followSession.asStateFlow()
+
+    private var follower: PathFollower? = null
 
     @Suppress("DEPRECATION")
     private fun checkIsMock(loc: Location): Boolean {
@@ -93,8 +101,9 @@ object SurveyRepository {
             }
         }
 
-        // 2. Multi-Epoch Station Averaging (SLA)
-        if (_isSamplingEpochs.value) {
+        // 2. Multi-Epoch Point Averaging (Measure)
+        val slot = _samplingSlot.value
+        if (_isSamplingEpochs.value && slot != null) {
             epochBuffer.add(loc)
             _currentEpochCount.value = epochBuffer.size
             val req = _targetEpochs.value
@@ -113,8 +122,8 @@ object SurveyRepository {
                     if (d[0] > maxSpread) maxSpread = d[0].toDouble()
                 }
 
-                val newStation = SurveyStation(
-                    name = pendingStationName.ifBlank { "Station ${_stations.value.size + 1}" },
+                val newPoint = MeasurePoint(
+                    name = slot.label,
                     latitude = avgLat,
                     longitude = avgLon,
                     altitude = avgAlt,
@@ -124,14 +133,22 @@ object SurveyRepository {
                     isMockProvider = checkIsMock(loc)
                 )
 
-                val updatedStations = _stations.value.filter { it.name != newStation.name } + newStation
-                _stations.value = updatedStations
-                recalculateSightLines(updatedStations)
+                val updated = _measurePoints.value + (slot to newPoint)
+                _measurePoints.value = updated
+                recalculateMeasurement(updated)
 
                 epochBuffer.clear()
                 _isSamplingEpochs.value = false
+                _samplingSlot.value = null
                 _currentEpochCount.value = 0
             }
+        }
+
+        // 3. Path Following Guidance
+        val session = _followSession.value
+        val activeFollower = follower
+        if (session != null && activeFollower != null) {
+            _followSession.value = session.copy(guidance = activeFollower.update(loc.latitude, loc.longitude))
         }
     }
 
@@ -168,66 +185,55 @@ object SurveyRepository {
         _totalDistanceMeters.value = 0.0
     }
 
-    // --- SLA Controls ---
+    // --- Measure Controls ---
     fun setTargetEpochs(epochs: Int) {
         _targetEpochs.value = epochs.coerceIn(1, 20)
     }
 
-    fun startStationCapture(stationName: String) {
-        pendingStationName = stationName
+    fun startPointCapture(slot: MeasureSlot) {
         epochBuffer.clear()
         _currentEpochCount.value = 0
+        _samplingSlot.value = slot
         _isSamplingEpochs.value = true
     }
 
-    fun cancelStationCapture() {
+    fun cancelPointCapture() {
         _isSamplingEpochs.value = false
+        _samplingSlot.value = null
         epochBuffer.clear()
         _currentEpochCount.value = 0
     }
 
-    fun clearStations() {
-        _stations.value = emptyList()
-        _sightLines.value = emptyList()
-        cancelStationCapture()
+    fun clearMeasurement() {
+        _measurePoints.value = emptyMap()
+        _measurement.value = null
+        cancelPointCapture()
     }
 
-    private fun recalculateSightLines(stationsList: List<SurveyStation>) {
-        if (stationsList.size < 2) {
-            _sightLines.value = emptyList()
-            return
-        }
+    fun measureBetween(from: MeasurePoint, to: MeasurePoint): StraightLineMeasurement {
+        val distanceResult = FloatArray(2)
+        Location.distanceBetween(
+            from.latitude, from.longitude,
+            to.latitude, to.longitude,
+            distanceResult
+        )
+        val hDist = distanceResult[0].toDouble()
+        val bearing = (distanceResult[1].toDouble() + 360.0) % 360.0
+        val vDelta = to.altitude - from.altitude
+        return StraightLineMeasurement(
+            from = from,
+            to = to,
+            horizontalDistanceMeters = hDist,
+            slopeDistanceMeters = sqrt(hDist.pow(2) + vDelta.pow(2)),
+            verticalDeltaMeters = vDelta,
+            bearingDegrees = bearing
+        )
+    }
 
-        val results = mutableListOf<SightLineResult>()
-        val primary = stationsList.first()
-
-        for (i in 1 until stationsList.size) {
-            val target = stationsList[i]
-            val distanceResult = FloatArray(2)
-            Location.distanceBetween(
-                primary.latitude, primary.longitude,
-                target.latitude, target.longitude,
-                distanceResult
-            )
-            val hDist = distanceResult[0].toDouble()
-            val bearing = (distanceResult[1].toDouble() + 360.0) % 360.0
-            val vDelta = target.altitude - primary.altitude
-            val slopeDist = sqrt(hDist.pow(2) + vDelta.pow(2))
-            val grade = if (hDist > 0.0) (vDelta / hDist) * 100.0 else 0.0
-
-            results.add(
-                SightLineResult(
-                    fromStation = primary,
-                    toStation = target,
-                    horizontalDistanceMeters = hDist,
-                    slopeDistanceMeters = slopeDist,
-                    verticalDeltaMeters = vDelta,
-                    gradePercent = grade,
-                    bearingDegrees = bearing
-                )
-            )
-        }
-        _sightLines.value = results
+    private fun recalculateMeasurement(points: Map<MeasureSlot, MeasurePoint>) {
+        val a = points[MeasureSlot.A]
+        val b = points[MeasureSlot.B]
+        _measurement.value = if (a != null && b != null) measureBetween(a, b) else null
     }
 
     // --- Feature & Area Survey Controls ---
@@ -313,8 +319,18 @@ object SurveyRepository {
     fun importGeoJson(fileName: String, jsonText: String): Boolean {
         return try {
             val root = JSONObject(jsonText)
-            val polylines = mutableListOf<List<Pair<Double, Double>>>()
+            val lines = mutableListOf<ImportedLine>()
             val points = mutableListOf<Triple<Double, Double, String>>()
+
+            fun parseLine(c: JSONArray?, label: String) {
+                if (c == null) return
+                val line = mutableListOf<LatLon>()
+                for (i in 0 until c.length()) {
+                    val pt = c.getJSONArray(i)
+                    line.add(LatLon(pt.getDouble(1), pt.getDouble(0)))
+                }
+                if (line.isNotEmpty()) lines.add(ImportedLine(label, line))
+            }
 
             fun parseGeometry(geom: JSONObject, label: String) {
                 when (geom.optString("type")) {
@@ -324,28 +340,27 @@ object SurveyRepository {
                             points.add(Triple(c.getDouble(1), c.getDouble(0), label))
                         }
                     }
-                    "LineString" -> {
-                        val c = geom.optJSONArray("coordinates")
-                        if (c != null) {
-                            val line = mutableListOf<Pair<Double, Double>>()
-                            for (i in 0 until c.length()) {
-                                val pt = c.getJSONArray(i)
-                                line.add(Pair(pt.getDouble(1), pt.getDouble(0)))
-                            }
-                            if (line.isNotEmpty()) polylines.add(line)
+                    "LineString" -> parseLine(geom.optJSONArray("coordinates"), label)
+                    "MultiLineString" -> {
+                        val parts = geom.optJSONArray("coordinates") ?: return
+                        for (i in 0 until parts.length()) {
+                            parseLine(parts.getJSONArray(i), if (parts.length() > 1) "$label (${i + 1})" else label)
                         }
                     }
                     "Polygon" -> {
                         val rings = geom.optJSONArray("coordinates")
-                        if (rings != null && rings.length() > 0) {
-                            val outer = rings.getJSONArray(0)
-                            val line = mutableListOf<Pair<Double, Double>>()
-                            for (i in 0 until outer.length()) {
-                                val pt = outer.getJSONArray(i)
-                                line.add(Pair(pt.getDouble(1), pt.getDouble(0)))
-                            }
-                            if (line.isNotEmpty()) polylines.add(line)
+                        if (rings != null && rings.length() > 0) parseLine(rings.getJSONArray(0), label)
+                    }
+                    "MultiPolygon" -> {
+                        val polys = geom.optJSONArray("coordinates") ?: return
+                        for (i in 0 until polys.length()) {
+                            val rings = polys.getJSONArray(i)
+                            if (rings.length() > 0) parseLine(rings.getJSONArray(0), "$label (${i + 1})")
                         }
+                    }
+                    "GeometryCollection" -> {
+                        val geoms = geom.optJSONArray("geometries") ?: return
+                        for (i in 0 until geoms.length()) parseGeometry(geoms.getJSONObject(i), label)
                     }
                 }
             }
@@ -368,7 +383,8 @@ object SurveyRepository {
                 parseGeometry(root, fileName)
             }
 
-            _importedOverlay.value = ImportedGeoJsonOverlay(fileName, polylines, points)
+            stopFollowing()
+            _importedOverlay.value = ImportedGeoJsonOverlay(fileName, lines, points)
             true
         } catch (e: Exception) {
             false
@@ -376,7 +392,23 @@ object SurveyRepository {
     }
 
     fun clearImportedOverlay() {
+        stopFollowing()
         _importedOverlay.value = null
+    }
+
+    // --- Follow Path Controls ---
+    fun startFollowing(lineIndex: Int, reversed: Boolean) {
+        val line = _importedOverlay.value?.lines?.getOrNull(lineIndex) ?: return
+        val path = if (reversed) line.points.reversed() else line.points
+        val newFollower = PathFollower(path)
+        follower = newFollower
+        val guidance = _currentLocation.value?.let { newFollower.update(it.latitude, it.longitude) }
+        _followSession.value = FollowSession(lineIndex, reversed, newFollower.points, guidance)
+    }
+
+    fun stopFollowing() {
+        follower = null
+        _followSession.value = null
     }
 
     // --- GeoJSON Exporters ---
@@ -413,59 +445,58 @@ object SurveyRepository {
         return root.toString(2)
     }
 
-    fun exportSlaGeoJson(): String {
+    fun exportMeasurementGeoJson(): String {
         val root = JSONObject().apply { put("type", "FeatureCollection") }
         val features = JSONArray()
 
-        for (st in _stations.value) {
+        for (pt in _measurePoints.value.values.sortedBy { it.name }) {
             val ptFeature = JSONObject().apply {
                 put("type", "Feature")
                 put("properties", JSONObject().apply {
-                    put("name", st.name)
-                    put("featureType", "SurveyStation")
-                    put("altitude_m", "%.2f".format(st.altitude))
-                    put("accuracy_m", "%.3f".format(st.accuracy))
-                    put("epochSpread_m", "%.3f".format(st.epochSpreadMeters))
-                    put("epochs", st.epochCount)
-                    put("mockGnss", st.isMockProvider)
+                    put("name", pt.name)
+                    put("featureType", "MeasurePoint")
+                    put("altitude_m", "%.2f".format(pt.altitude))
+                    put("accuracy_m", "%.3f".format(pt.accuracy))
+                    put("epochSpread_m", "%.3f".format(pt.epochSpreadMeters))
+                    put("epochs", pt.epochCount)
+                    put("mockGnss", pt.isMockProvider)
                 })
                 put("geometry", JSONObject().apply {
                     put("type", "Point")
                     put("coordinates", JSONArray().apply {
-                        put(st.longitude)
-                        put(st.latitude)
-                        put(st.altitude)
+                        put(pt.longitude)
+                        put(pt.latitude)
+                        put(pt.altitude)
                     })
                 })
             }
             features.put(ptFeature)
         }
 
-        for (line in _sightLines.value) {
+        _measurement.value?.let { m ->
             val lineFeature = JSONObject().apply {
                 put("type", "Feature")
                 put("properties", JSONObject().apply {
-                    put("featureType", "SightLine")
-                    put("fromStation", line.fromStation.name)
-                    put("toStation", line.toStation.name)
-                    put("horizontalDistance_m", "%.2f".format(line.horizontalDistanceMeters))
-                    put("slopeDistance_m", "%.2f".format(line.slopeDistanceMeters))
-                    put("verticalDelta_m", "%.2f".format(line.verticalDeltaMeters))
-                    put("grade_percent", "%.2f".format(line.gradePercent))
-                    put("bearing_deg", "%.1f".format(line.bearingDegrees))
+                    put("featureType", "StraightLineMeasurement")
+                    put("from", m.from.name)
+                    put("to", m.to.name)
+                    put("horizontalDistance_m", "%.2f".format(m.horizontalDistanceMeters))
+                    put("slopeDistance_m", "%.2f".format(m.slopeDistanceMeters))
+                    put("verticalDelta_m", "%.2f".format(m.verticalDeltaMeters))
+                    put("bearing_deg", "%.1f".format(m.bearingDegrees))
                 })
                 put("geometry", JSONObject().apply {
                     put("type", "LineString")
                     put("coordinates", JSONArray().apply {
                         put(JSONArray().apply {
-                            put(line.fromStation.longitude)
-                            put(line.fromStation.latitude)
-                            put(line.fromStation.altitude)
+                            put(m.from.longitude)
+                            put(m.from.latitude)
+                            put(m.from.altitude)
                         })
                         put(JSONArray().apply {
-                            put(line.toStation.longitude)
-                            put(line.toStation.latitude)
-                            put(line.toStation.altitude)
+                            put(m.to.longitude)
+                            put(m.to.latitude)
+                            put(m.to.altitude)
                         })
                     })
                 })
