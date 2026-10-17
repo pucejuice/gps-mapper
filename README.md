@@ -14,7 +14,6 @@ A GNSS survey, path recording, distance measurement and path-following app for A
    - Capture **Point A** and **Point B**, each averaged over 4 or 10 stationary epochs, with horizontal spread (`±m`) reported.
    - Reports **horizontal distance**, **slope distance**, **height difference (Δh)** and **true bearing** A → B.
    - Live distance from Point A to your current position.
-   - Raw measurements only: no design standards, minimum distances or pass/fail checks are applied.
 
 3. **Area** – feature & area survey
    - One-tap point feature logging with preset tags (`Kerb/Edge`, `Boundary`, `Pit/Drain`, `Power/Util`, `Tree`, `Sign/Post`) and custom notes.
