@@ -6,6 +6,7 @@ A GNSS survey, path recording, distance measurement and path-following app for A
 
 1. **Path** – record a track
    - Continuous background GNSS logging via an Android `ForegroundService` (keeps recording with the screen locked).
+   - **GPS is released when you leave the app** unless a path recording, path following or station hold is running. While one is, a notification shows what is using GPS, with a **Stop GPS** button.
    - Live cumulative distance (m / km), logged point counter, elevation, and ground speed (km/h).
    - Selectable **Accuracy Gate** (`≤0.5m RTK`, `≤2.0m`, or `All`) in Settings to reject multipath outliers.
    - **Undo Last Point**, **Pause/Resume**, and direct `.geojson` saving or sharing.

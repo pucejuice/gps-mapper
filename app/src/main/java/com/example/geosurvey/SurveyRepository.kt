@@ -2,13 +2,38 @@ package com.example.geosurvey
 
 import android.location.Location
 import android.os.Build
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.*
 
+/** Work that justifies keeping GPS on while the app is in the background. */
+enum class BackgroundTask(val label: String) {
+    IDLE(""),
+    HOLDING("Holding station"),
+    RECORDING("Recording path"),
+    FOLLOWING("Following path")
+}
+
 object SurveyRepository {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    // Whether the app is on screen; GPS is released when it isn't and nothing needs it
+    private val _appVisible = MutableStateFlow(false)
+    val appVisible = _appVisible.asStateFlow()
+
+    fun setAppVisible(visible: Boolean) {
+        _appVisible.value = visible
+    }
 
     // Live GNSS fix
     private val _currentLocation = MutableStateFlow<Location?>(null)
@@ -51,6 +76,24 @@ object SurveyRepository {
     val followSession = _followSession.asStateFlow()
 
     private var follower: PathFollower? = null
+
+    val backgroundTask: StateFlow<BackgroundTask> = combine(
+        _isRecordingPath, _followSession, MeasureRepository.occupation
+    ) { recording, follow, occupation ->
+        when {
+            occupation != null -> BackgroundTask.HOLDING
+            recording -> BackgroundTask.RECORDING
+            follow != null -> BackgroundTask.FOLLOWING
+            else -> BackgroundTask.IDLE
+        }
+    }.stateIn(scope, SharingStarted.Eagerly, BackgroundTask.IDLE)
+
+    /** "Stop GPS" from the notification: end anything that keeps GPS on in the background. */
+    fun stopBackgroundWork() {
+        stopPathRecording()
+        stopFollowing()
+        if (MeasureRepository.occupation.value != null) MeasureRepository.cancelStation()
+    }
 
     @Suppress("DEPRECATION")
     private fun checkIsMock(loc: Location): Boolean {

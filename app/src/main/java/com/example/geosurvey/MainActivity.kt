@@ -110,13 +110,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // GPS runs while the app is on screen. When it leaves the screen the service stops
+    // itself unless a path recording, path following or station hold is in progress.
+    override fun onStart() {
+        super.onStart()
+        SurveyRepository.setAppVisible(true)
+        startTrackingService()
+    }
+
+    override fun onStop() {
+        // A rotation restarts the activity; don't drop GPS for that.
+        if (!isChangingConfigurations) SurveyRepository.setAppVisible(false)
+        super.onStop()
+    }
+
     private fun startTrackingService() {
-        val serviceIntent = Intent(this, TrackingService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
-        }
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted && SurveyRepository.appVisible.value) TrackingService.start(this)
     }
 
     private fun shareGeoJson(content: String, title: String) {
