@@ -16,6 +16,16 @@ import java.util.concurrent.Executors
  * recorded, so a run survives the app being closed or killed mid-way. Activities older
  * than the chosen retention period are deleted automatically.
  */
+data class CourseSummary(
+    val id: Long,
+    val name: String,
+    val loop: Boolean,
+    val lengthM: Double,
+    val createdAt: Long,
+    val bestMs: Long?,
+    val lapCount: Int
+)
+
 object HistoryRepository {
 
     val ACTIVITY_TYPES = listOf("Run", "Ride", "Walk", "Hike", "Other")
@@ -23,7 +33,7 @@ object HistoryRepository {
 
     private const val PREFS = "wayopps_history"
 
-    private class Db(context: Context) : SQLiteOpenHelper(context, "wayopps_history.db", null, 1) {
+    private class Db(context: Context) : SQLiteOpenHelper(context, "wayopps_history.db", null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE activities (
@@ -42,13 +52,42 @@ object HistoryRepository {
                     lat REAL NOT NULL, lon REAL NOT NULL, alt REAL, acc REAL NOT NULL, t INTEGER NOT NULL)"""
             )
             db.execSQL("CREATE INDEX idx_points ON points(activity_id, seq)")
+            createV2(db)
+        }
+
+        /** v2: saved courses and lap times. */
+        private fun createV2(db: SQLiteDatabase) {
+            db.execSQL(
+                """CREATE TABLE courses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    loop INTEGER NOT NULL,
+                    length_m REAL NOT NULL,
+                    points TEXT NOT NULL,
+                    created_at INTEGER NOT NULL)"""
+            )
+            db.execSQL(
+                """CREATE TABLE laps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    activity_id INTEGER REFERENCES activities(id) ON DELETE SET NULL,
+                    course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
+                    lap_no INTEGER NOT NULL,
+                    started_at INTEGER NOT NULL,
+                    elapsed_ms INTEGER NOT NULL,
+                    distance_m REAL NOT NULL,
+                    splits TEXT)"""
+            )
+            db.execSQL("CREATE INDEX idx_laps_course ON laps(course_id, elapsed_ms)")
+            db.execSQL("CREATE INDEX idx_laps_activity ON laps(activity_id, lap_no)")
         }
 
         override fun onConfigure(db: SQLiteDatabase) {
             db.setForeignKeyConstraintsEnabled(true)
         }
 
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 2) createV2(db)
+        }
     }
 
     private var db: Db? = null
@@ -65,6 +104,9 @@ object HistoryRepository {
     private val _activityType = MutableStateFlow("Run")
     val activityType = _activityType.asStateFlow()
 
+    private val _courses = MutableStateFlow<List<CourseSummary>>(emptyList())
+    val courses = _courses.asStateFlow()
+
     fun attach(context: Context, currentActivityId: Long?) {
         if (db != null) return
         appContext = context.applicationContext
@@ -76,6 +118,7 @@ object HistoryRepository {
             finishInterrupted(currentActivityId)
             purgeOld()
             refreshNow()
+            refreshCoursesNow()
         }
     }
 
@@ -91,10 +134,12 @@ object HistoryRepository {
     }
 
     // ---------------- recording ----------------
+    fun defaultName(type: String, startedAt: Long) =
+        "$type " + SimpleDateFormat("EEE d MMM HH:mm", Locale.getDefault()).format(Date(startedAt))
+
     /** Creates the activity row and returns its id (synchronous: one small insert). */
-    fun begin(type: String, startedAt: Long): Long? {
+    fun begin(type: String, startedAt: Long, name: String = defaultName(type, startedAt)): Long? {
         val w = db?.writableDatabase ?: return null
-        val name = "$type " + SimpleDateFormat("EEE d MMM HH:mm", Locale.getDefault()).format(Date(startedAt))
         return w.insert("activities", null, ContentValues().apply {
             put("name", name); put("type", type); put("started_at", startedAt)
         }).takeIf { it > 0 }
@@ -125,7 +170,15 @@ object HistoryRepository {
     }
 
     fun delete(activityId: Long) = io.execute {
+        // A deliberate delete also removes its laps (so a bad run can't hold a PB)
+        db?.writableDatabase?.delete("laps", "activity_id = ?", arrayOf(activityId.toString()))
         db?.writableDatabase?.delete("activities", "id = ?", arrayOf(activityId.toString()))
+        refreshNow()
+        refreshCoursesNow()
+    }
+
+    fun setType(activityId: Long, type: String) = io.execute {
+        db?.writableDatabase?.update("activities", ContentValues().apply { put("type", type) }, "id = ?", arrayOf(activityId.toString()))
         refreshNow()
     }
 
@@ -144,6 +197,94 @@ object HistoryRepository {
             }
         }
         return out
+    }
+
+    // ---------------- courses & laps ----------------
+    fun saveCourse(name: String, loop: Boolean, points: List<LatLon>, onSaved: (Long) -> Unit = {}) = io.execute {
+        val pts = Courses.normalise(points, loop)
+        val arr = org.json.JSONArray()
+        for (p in pts) arr.put(org.json.JSONArray().put(p.lat).put(p.lon))
+        val id = db?.writableDatabase?.insert("courses", null, ContentValues().apply {
+            put("name", name.trim().ifEmpty { "Course" }); put("loop", if (loop) 1 else 0)
+            put("length_m", PathFollower(pts).totalMeters); put("points", arr.toString())
+            put("created_at", System.currentTimeMillis())
+        }) ?: -1L
+        refreshCoursesNow()
+        if (id > 0) android.os.Handler(android.os.Looper.getMainLooper()).post { onSaved(id) }
+    }
+
+    fun renameCourse(id: Long, name: String) = io.execute {
+        db?.writableDatabase?.update("courses", ContentValues().apply { put("name", name.trim()) }, "id = ?", arrayOf(id.toString()))
+        refreshCoursesNow()
+    }
+
+    fun deleteCourse(id: Long) = io.execute {
+        db?.writableDatabase?.delete("courses", "id = ?", arrayOf(id.toString()))
+        refreshCoursesNow()
+    }
+
+    /** Full course with points (call off the main thread). */
+    fun course(id: Long): Course? {
+        val r = db?.readableDatabase ?: return null
+        r.rawQuery("SELECT id, name, loop, length_m, points, created_at FROM courses WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (!c.moveToFirst()) return null
+            val arr = org.json.JSONArray(c.getString(4))
+            val pts = (0 until arr.length()).map { arr.getJSONArray(it).let { p -> LatLon(p.getDouble(0), p.getDouble(1)) } }
+            return Course(c.getLong(0), c.getString(1), c.getInt(2) == 1, pts, c.getDouble(3), c.getLong(5))
+        }
+    }
+
+    fun saveLap(activityId: Long?, lap: LapResult) = io.execute {
+        db?.writableDatabase?.insert("laps", null, ContentValues().apply {
+            if (activityId != null) put("activity_id", activityId) else putNull("activity_id")
+            if (lap.courseId != null) put("course_id", lap.courseId) else putNull("course_id")
+            put("lap_no", lap.lapNo); put("started_at", lap.startedAt); put("elapsed_ms", lap.elapsedMs)
+            put("distance_m", lap.distanceM)
+            put("splits", org.json.JSONArray(lap.splitsMs).toString())
+        })
+        refreshCoursesNow()
+    }
+
+    /** Best lap on a course (call off the main thread). */
+    fun personalBest(courseId: Long): LapResult? = laps("course_id = ?", courseId, "elapsed_ms ASC", 1).firstOrNull()
+
+    /** All laps on a course, fastest first (call off the main thread). */
+    fun courseLaps(courseId: Long): List<LapResult> = laps("course_id = ?", courseId, "elapsed_ms ASC", 200)
+
+    /** Laps of one activity in order (call off the main thread). */
+    fun activityLaps(activityId: Long): List<LapResult> = laps("activity_id = ?", activityId, "lap_no ASC", 500)
+
+    private fun laps(where: String, arg: Long, order: String, limit: Int): List<LapResult> {
+        val r = db?.readableDatabase ?: return emptyList()
+        val out = mutableListOf<LapResult>()
+        r.rawQuery(
+            "SELECT lap_no, started_at, elapsed_ms, distance_m, splits, course_id FROM laps WHERE $where ORDER BY $order LIMIT $limit",
+            arrayOf(arg.toString())
+        ).use { c ->
+            while (c.moveToNext()) {
+                val splits = if (c.isNull(4)) emptyList() else org.json.JSONArray(c.getString(4)).let { a -> (0 until a.length()).map { a.getLong(it) } }
+                out.add(LapResult(c.getInt(0), c.getLong(1), c.getLong(2), c.getDouble(3), splits, if (c.isNull(5)) null else c.getLong(5)))
+            }
+        }
+        return out
+    }
+
+    private fun refreshCoursesNow() {
+        val r = db?.readableDatabase ?: return
+        val out = mutableListOf<CourseSummary>()
+        r.rawQuery(
+            """SELECT c.id, c.name, c.loop, c.length_m, c.created_at,
+                      (SELECT MIN(elapsed_ms) FROM laps l WHERE l.course_id = c.id),
+                      (SELECT COUNT(*) FROM laps l WHERE l.course_id = c.id)
+               FROM courses c ORDER BY c.name COLLATE NOCASE""",
+            null
+        ).use { c ->
+            while (c.moveToNext()) {
+                out.add(CourseSummary(c.getLong(0), c.getString(1), c.getInt(2) == 1, c.getDouble(3), c.getLong(4),
+                    if (c.isNull(5)) null else c.getLong(5), c.getInt(6)))
+            }
+        }
+        _courses.value = out
     }
 
     private fun refreshNow() {
@@ -171,6 +312,8 @@ object HistoryRepository {
     private fun purgeOld() {
         val cutoff = Gpx.retentionCutoff(System.currentTimeMillis(), _keepDays.value) ?: return
         db?.writableDatabase?.delete("activities", "ended_at IS NOT NULL AND started_at < ?", arrayOf(cutoff.toString()))
+        // Course laps (PBs) outlive their activity; manual laps go with it
+        db?.writableDatabase?.delete("laps", "activity_id IS NULL AND course_id IS NULL", null)
     }
 
     /** Recordings left open by the app being killed: close them using their saved points. */

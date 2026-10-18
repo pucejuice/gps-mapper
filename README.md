@@ -5,7 +5,9 @@ A mapping, activity recording, distance measurement and path-following app for A
 ## Modes & Features
 
 1. **Path** – record runs, rides, walks and hikes
-   - Pick the activity type, then **Start / Pause / Resume** and **Finish** (⚑) to save it to **History**. Recording continues with the screen locked.
+   - Clear recording flow: pick the activity type (and optionally a course), **Start** → **Pause** (and **Lap**) → then **Resume** to keep adding to the same track, **Finish…** to name it and save it to **History**, or **Discard**. Every recording has a name (tap it to rename at any time; defaults to e.g. "Run Sat 18 Oct 07:05"). Recording continues with the screen locked.
+   - **Laps**: the **Lap** button records a manual split (time, distance, pace since the last lap).
+   - **Courses & PBs**: save any route as a course (*Finish… › Also save the route as a course*, or *History › Save as course…*) — loops are detected automatically, or choose point to point. Pick the course before starting: laps are timed automatically from your closest pass of the start to your closest pass of the finish (back to back on a loop), only count when ≥80% of the course was covered, and show a live **gap to your PB** at the same point on the course (split every 50 m). Each lap plays a sound and notifies "Lap 3: 4:58 · New PB!". *☰ › Courses & PBs* lists courses with PB and a best-times table. Course PBs are kept when old activities are cleared by the retention setting.
    - Live distance, moving time, pace and speed; the path draws on the map as you go. Pace is your average over a trailing window set in **Settings › Pace measurement** (10 s, 20 s, 30 s (default), 1 min or 2 min) and the same window drives the pace alerts.
    - Selectable **Accuracy Gate** (≤0.5 / 2 / 5 / 10 (default) / 25 m) in Settings, with a status line that warns when fixes are being skipped. A point is logged once you move more than ~0.4× the fix accuracy (min 0.5 m), so standing still doesn't add jitter distance.
    - **Alerts** (🔔): any number of **distance alerts** — once (e.g. at 1 km) or repeating (every 1 km, every 500 m…) — each with its own system notification sound; and a **pace alert** with a target pace and separate *too slow* / *too fast* tolerances (5–20 %), each with its own sound, repeating every 30/60/120 s while out of range. Alerts play the sound, vibrate and post a notification.
@@ -56,6 +58,6 @@ The Android application ID and code package are `com.wayopps.app` (from v2.1). E
 
 ## Build
 
-GitHub Actions (`.github/workflows/build.yml`) runs the unit tests and builds a debug APK on every push (or manually via `workflow_dispatch`). Download the `wayopps-debug-apk` artifact from the workflow run and install `app-debug.apk` on the phone (allow installs from unknown sources).
+GitHub Actions (`.github/workflows/build.yml`) runs the unit tests and builds a debug APK **on request**: Actions tab › *Build Android APK* › **Run workflow** (pick the branch), or push a version tag (`v*`). Ordinary pushes do not build. Download the `wayopps-debug-apk` artifact from the workflow run and install `app-debug.apk` on the phone (allow installs from unknown sources).
 
 Locally: `gradle testDebugUnitTest assembleDebug` with JDK 17 and the Android SDK.

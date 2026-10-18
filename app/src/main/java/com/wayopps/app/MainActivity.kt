@@ -244,6 +244,7 @@ fun MainScreen(
     var showReceiver by remember { mutableStateOf(false) }
     var showAlerts by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showCourses by remember { mutableStateOf(false) }
     val receiverQuality by SurveyRepository.receiverQuality.collectAsState()
 
     // Status bar matches the Voronoi top bar; navigation bar matches the bottom panel
@@ -279,6 +280,7 @@ fun MainScreen(
     if (showReceiver) ReceiverDialog(onDismiss = { showReceiver = false })
     if (showAlerts) AlertsDialog(onDismiss = { showAlerts = false })
     if (showHistory) HistorySheet(onDismiss = { showHistory = false }, onSave = onSaveGeoJson, onShare = onShareGeoJson)
+    if (showCourses) CoursesDialog(onDismiss = { showCourses = false })
 
     if (showSettings) {
         SettingsDialog(
@@ -378,6 +380,14 @@ fun MainScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                text = { Text("Courses & PBs") },
+                                leadingIcon = { Icon(Icons.Default.EmojiEvents, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    showCourses = true
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("GNSS receiver") },
                                 leadingIcon = { Icon(Icons.Default.SatelliteAlt, contentDescription = null) },
                                 onClick = {
@@ -457,7 +467,7 @@ fun MainScreen(
             ) {
                 Column {
                     when (selectedTab) {
-                        0 -> PathPanel(curLocation, { showAlerts = true }, onSaveGeoJson, onShareGeoJson)
+                        0 -> PathPanel(curLocation, { showAlerts = true }, { showCourses = true })
                         1 -> MeasurePanel(curLocation, { showRecords = true }, onSaveGeoJson, onShareGeoJson)
                         2 -> AreaPanel(curLocation, onSaveGeoJson, onShareGeoJson)
                         3 -> FollowPanel(importedOverlay, followSession, curLocation, onImportGeoJson)

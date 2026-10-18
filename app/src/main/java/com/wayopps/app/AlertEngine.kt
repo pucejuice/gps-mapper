@@ -150,6 +150,12 @@ object AlertEngine {
         }
     }
 
+    /** Sound (default notification sound unless [soundUri]), vibrate and post a notification. */
+    fun announce(title: String, text: String, soundUri: String? = null) {
+        play(soundUri)
+        notify(title, text)
+    }
+
     fun formatKm(m: Double): String = if (m >= 1000) "${"%.2f".format(m / 1000).trimEnd('0').trimEnd('.')} km" else "${m.toInt()} m"
 
     /** Plays [uri], or the phone's default notification sound when null. */

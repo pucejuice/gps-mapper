@@ -141,6 +141,12 @@ class PathFollower(
         hasArrived = false
     }
 
+    /** Start tracking from a known progress (e.g. 0 at the start of a loop, where start and end overlap). */
+    fun seed(alongMeters: Double) {
+        lastAlong = alongMeters
+        hasArrived = false
+    }
+
     /**
      * Closest point on the path within [fromAlong, toAlong]. When [previous] progress is known,
      * candidates that jump backwards or far forwards are penalised, so overlapping stretches

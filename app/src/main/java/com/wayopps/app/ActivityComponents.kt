@@ -11,6 +11,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -36,27 +37,41 @@ import java.util.Date
 import java.util.Locale
 
 // ---------------- Path (activity recording) panel ----------------
+/**
+ * Three clear states:
+ *  - no recording: pick type (and optionally a course), Start new
+ *  - recording:    Pause, Lap
+ *  - paused:       Resume (keep this track), Finish… (name it and save to History), Discard
+ */
 @Composable
 fun PathPanel(
     currentLocation: Location?,
     onShowAlerts: () -> Unit,
-    onSave: (String, String) -> Unit,
-    onShare: (String, String) -> Unit
+    onShowCourses: () -> Unit
 ) {
     val context = LocalContext.current
     val isRecording by SurveyRepository.isRecordingPath.collectAsState()
     val pathPoints by SurveyRepository.pathPoints.collectAsState()
     val totalDistance by SurveyRepository.totalDistanceMeters.collectAsState()
     val activityId by SurveyRepository.currentActivityId.collectAsState()
+    val name by SurveyRepository.recordingName.collectAsState()
     val gate by SurveyRepository.maxAccuracyFilterMeters.collectAsState()
     val rejected by SurveyRepository.pathRejectedFixes.collectAsState()
+    val laps by SurveyRepository.laps.collectAsState()
+    val lapStatus by SurveyRepository.lapStatus.collectAsState()
+    val course by SurveyRepository.activeCourse.collectAsState()
+    val courses by HistoryRepository.courses.collectAsState()
     val pace by AlertEngine.currentPace.collectAsState()
     val distanceAlerts by AlertEngine.distanceAlerts.collectAsState()
     val paceSettings by AlertEngine.pace.collectAsState()
     val type by HistoryRepository.activityType.collectAsState()
     var showTypes by remember { mutableStateOf(false) }
+    var showCourseMenu by remember { mutableStateOf(false) }
+    var showFinish by remember { mutableStateOf(false) }
+    var showDiscard by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
 
-    // Tick once a second so the moving time updates
+    // Tick once a second so the times update
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(isRecording) {
         while (isRecording) { now = System.currentTimeMillis(); delay(1000) }
@@ -65,6 +80,7 @@ fun PathPanel(
     val movingMs = SurveyRepository.movingTimeMs(now)
     val avgPace = if (totalDistance >= 10) (movingMs / 1000.0) / (totalDistance / 1000.0) else null
     val hasRecording = activityId != null
+    val alertsOn = distanceAlerts.any { it.enabled } || paceSettings.enabled
 
     Column(
         modifier = Modifier
@@ -72,6 +88,25 @@ fun PathPanel(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
+        if (hasRecording) {
+            // Title: the recording's name, tap to rename
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clickable { renaming = true }
+            ) {
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .background(if (isRecording) Sla.stop else Sla.warn, androidx.compose.foundation.shape.CircleShape)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.Default.Edit, contentDescription = "Rename", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (isRecording) "  recording" else "  paused", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Stat("Distance", formatMeters(totalDistance))
             Stat("Time", formatDuration(movingMs))
@@ -79,75 +114,237 @@ fun PathPanel(
             Stat("Speed", currentLocation?.speed?.let { "${"%.1f".format(it * 3.6f)} km/h" } ?: "--")
         }
 
+        // Lap line: course timing, or manual laps
+        val ls = lapStatus
+        if (hasRecording && ls != null) {
+            val lapText = if (ls.running) {
+                "Lap ${ls.lapNo} · ${formatDuration(now - ls.lapStartMs)} · ${(ls.fraction * 100).toInt()}%" +
+                    (ls.gapMs?.let { g -> " · ${if (g <= 0) "−" else "+"}${formatDuration(kotlin.math.abs(g))} vs PB" } ?: "")
+            } else "Go to the start of ${ls.courseName ?: "the course"} — timing starts as you pass it"
+            Text(
+                lapText + (ls.bestMs?.let { "   (PB ${formatDuration(it)})" } ?: ""),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = when {
+                    ls.offCourse -> Sla.warn
+                    ls.gapMs == null -> Sla.accent
+                    ls.gapMs <= 0 -> Sla.go
+                    else -> Sla.stop
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (ls.offCourse) Text("Off course — get back on the line for the lap to count", fontSize = 11.sp, color = Sla.warn)
+        } else if (hasRecording && laps.isNotEmpty()) {
+            val last = laps.last()
+            Text(
+                "Lap ${last.lapNo}: ${formatDuration(last.elapsedMs)} · ${AlertEngine.formatKm(last.distanceM)}" +
+                    "   best ${formatDuration(laps.minOf { it.elapsedMs })}",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Sla.accent,
+                maxLines = 1
+            )
+        }
+
         // Status line, so it's obvious when the gate is skipping fixes
         val acc = currentLocation?.accuracy
         val gateText = if (gate < 1f) "%.1f".format(gate) else "%.0f".format(gate)
         val (status, warn) = when {
-            !hasRecording -> "Choose an activity and press Start. Finished recordings are saved to History." to false
-            !isRecording -> "Paused · ${pathPoints.size} points · resume or finish" to false
+            !hasRecording -> (if (course != null) "Timing laps on ${course!!.name}. " else "") +
+                "Start a new recording; finish it to save to History." to false
+            !isRecording -> "Paused — Resume keeps adding to this track; Finish saves it." to false
             currentLocation == null -> "Recording · waiting for GPS…" to true
             acc != null && acc > gate ->
                 "Fix ±${"%.1f".format(acc)} m is worse than the ±$gateText m gate — not logging (Settings)" to true
-            else -> "● Recording · ±${"%.1f".format(acc ?: 0f)} m · ${pathPoints.size} pts" +
-                (if (rejected > 0) " · $rejected skipped" else "") to false
+            else -> "● ±${"%.1f".format(acc ?: 0f)} m · ${pathPoints.size} pts" + (if (rejected > 0) " · $rejected skipped" else "") to false
         }
-        Text(
-            status,
-            fontSize = 12.sp,
-            color = if (warn) Sla.warn else if (isRecording) Sla.go else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2
-        )
+        Text(status, fontSize = 12.sp, color = if (warn) Sla.warn else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Activity type (fixed once a recording has started)
-            Box {
-                OutlinedButton(
-                    onClick = { showTypes = true },
-                    enabled = !hasRecording,
-                    contentPadding = PaddingValues(horizontal = 8.dp)
-                ) {
-                    Text(type, maxLines = 1)
-                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                }
-                DropdownMenu(expanded = showTypes, onDismissRequest = { showTypes = false }) {
-                    HistoryRepository.ACTIVITY_TYPES.forEach { t ->
-                        DropdownMenuItem(text = { Text(t) }, onClick = { HistoryRepository.setActivityType(t); showTypes = false })
+            when {
+                !hasRecording -> {
+                    // Type
+                    Box {
+                        OutlinedButton(onClick = { showTypes = true }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text(type, maxLines = 1)
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                        DropdownMenu(expanded = showTypes, onDismissRequest = { showTypes = false }) {
+                            HistoryRepository.ACTIVITY_TYPES.forEach { t ->
+                                DropdownMenuItem(text = { Text(t) }, onClick = { HistoryRepository.setActivityType(t); showTypes = false })
+                            }
+                        }
+                    }
+                    // Course (lap timing)
+                    Box {
+                        OutlinedButton(onClick = { showCourseMenu = true }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Icon(Icons.Default.Flag, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(2.dp))
+                            Text(course?.name ?: "No course", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 90.dp))
+                        }
+                        DropdownMenu(expanded = showCourseMenu, onDismissRequest = { showCourseMenu = false }) {
+                            DropdownMenuItem(text = { Text("No course (free recording)") }, onClick = { SurveyRepository.selectCourse(null); showCourseMenu = false })
+                            courses.forEach { c ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(c.name)
+                                            Text(
+                                                "${if (c.loop) "Loop" else "A→B"} · ${AlertEngine.formatKm(c.lengthM)}" +
+                                                    (c.bestMs?.let { " · PB ${formatDuration(it)}" } ?: ""),
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    onClick = { SurveyRepository.selectCourse(c.id); showCourseMenu = false }
+                                )
+                            }
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Manage courses…") },
+                                leadingIcon = { Icon(Icons.Default.Settings, null) },
+                                onClick = { showCourseMenu = false; onShowCourses() }
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = { SurveyRepository.startPathRecording() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32), contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Text("Start", maxLines = 1, softWrap = false)
                     }
                 }
+                isRecording -> {
+                    Button(
+                        onClick = { SurveyRepository.stopPathRecording() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828), contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Pause, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Pause", maxLines = 1, softWrap = false)
+                    }
+                    // Manual lap (course laps are automatic)
+                    if (course == null) {
+                        OutlinedButton(onClick = { SurveyRepository.manualLap() }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                            Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Lap", maxLines = 1)
+                        }
+                    }
+                }
+                else -> {
+                    Button(
+                        onClick = { SurveyRepository.startPathRecording() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32), contentColor = Color.White),
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Text("Resume", maxLines = 1, softWrap = false)
+                    }
+                    Button(
+                        onClick = { showFinish = true },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.Flag, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Finish…", maxLines = 1, softWrap = false)
+                    }
+                    PanelIcon(Icons.Default.Delete, "Discard recording", true) { showDiscard = true }
+                }
             }
-            Button(
-                onClick = {
-                    if (isRecording) SurveyRepository.stopPathRecording() else SurveyRepository.startPathRecording()
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRecording) Color(0xFFC62828) else Color(0xFF2E7D32),
-                    contentColor = Color.White
-                ),
-                contentPadding = PaddingValues(horizontal = 8.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(if (isRecording) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text(if (isRecording) "Pause" else if (hasRecording) "Resume" else "Start", maxLines = 1, softWrap = false)
-            }
-            // Finish: save to History
-            PanelIcon(Icons.Default.Flag, "Finish and save", hasRecording) {
-                val msg = SurveyRepository.finishRecording() ?: "Nothing recorded — discarded"
-                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-            }
-            val alertsOn = distanceAlerts.any { it.enabled } || paceSettings.enabled
             BadgedBox(badge = { if (alertsOn) Badge() }) {
                 PanelIcon(if (alertsOn) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone, "Alerts", true, onShowAlerts)
             }
-            ExportButton(
-                pathPoints.isNotEmpty(), "path", SurveyRepository::exportPathGeoJson, onSave, onShare,
-                "Discard recording", SurveyRepository::clearPath
-            )
         }
+    }
+
+    if (renaming) {
+        var text by remember { mutableStateOf(name) }
+        AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Name this recording") },
+            text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { SurveyRepository.renameRecording(text); renaming = false }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showDiscard) {
+        AlertDialog(
+            onDismissRequest = { showDiscard = false },
+            title = { Text("Discard this recording?") },
+            text = { Text("${AlertEngine.formatKm(totalDistance)} · ${formatDuration(movingMs)} will not be saved to History.") },
+            confirmButton = {
+                TextButton(onClick = { SurveyRepository.clearPath(); showDiscard = false }) {
+                    Text("Discard", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showDiscard = false }) { Text("Keep it") } }
+        )
+    }
+
+    if (showFinish) {
+        var text by remember { mutableStateOf(name) }
+        var finishType by remember { mutableStateOf(type) }
+        val looksLoop = remember(pathPoints.size) { Courses.looksLikeLoop(pathPoints.map { LatLon(it.lat, it.lon) }) }
+        var asCourse by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showFinish = false },
+            title = { Text("Finish & save") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "${AlertEngine.formatKm(totalDistance)} · ${formatDuration(movingMs)} · ${Pace.format(avgPace)} /km" +
+                            (if (laps.isNotEmpty()) " · ${laps.size} lap${if (laps.size == 1) "" else "s"}" else ""),
+                        fontSize = 13.sp
+                    )
+                    OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true, label = { Text("Name") })
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                        HistoryRepository.ACTIVITY_TYPES.forEach { t ->
+                            FilterChip(selected = finishType == t, onClick = { finishType = t }, label = { Text(t, fontSize = 12.sp) })
+                        }
+                    }
+                    if (course == null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable(enabled = pathPoints.size >= 2) { asCourse = !asCourse }
+                        ) {
+                            Checkbox(checked = asCourse, onCheckedChange = { asCourse = it }, enabled = pathPoints.size >= 2)
+                            Column {
+                                Text("Also save the route as a course")
+                                Text(
+                                    if (looksLoop) "Looks like a loop — laps will be timed start→start"
+                                    else "Point to point — timed from start to finish",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val msg = SurveyRepository.finishRecording(text, finishType, asCourse) ?: "Nothing recorded — discarded"
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    showFinish = false
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showFinish = false }) { Text("Keep recording") } }
+        )
     }
 }
 
@@ -341,6 +538,8 @@ fun HistorySheet(
     val keepDays by HistoryRepository.keepDays.collectAsState()
     var renaming by remember { mutableStateOf<ActivitySummary?>(null) }
     var deleting by remember { mutableStateOf<ActivitySummary?>(null) }
+    var savingCourse by remember { mutableStateOf<ActivitySummary?>(null) }
+    var lapsFor by remember { mutableStateOf<ActivitySummary?>(null) }
     val dateFmt = remember { SimpleDateFormat("EEE d MMM yyyy · HH:mm", Locale.getDefault()) }
 
     /** Loads points off the main thread, then runs [then] on the main thread. */
@@ -468,6 +667,12 @@ fun HistorySheet(
                                 menu = false
                                 withPoints(a) { pts -> onSave(activityGeoJson(a, pts), fileStem(a) + ".geojson") }
                             })
+                            DropdownMenuItem(text = { Text("Laps") }, leadingIcon = { Icon(Icons.Default.Timer, null) }, onClick = {
+                                menu = false; lapsFor = a
+                            })
+                            DropdownMenuItem(text = { Text("Save as course…") }, leadingIcon = { Icon(Icons.Default.Flag, null) }, onClick = {
+                                menu = false; savingCourse = a
+                            })
                             DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = {
                                 menu = false; renaming = a
                             })
@@ -492,6 +697,46 @@ fun HistorySheet(
             text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true) },
             confirmButton = { TextButton(onClick = { HistoryRepository.rename(a.id, name); renaming = null }) { Text("Save") } },
             dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } }
+        )
+    }
+    lapsFor?.let { a -> LapsDialog(title = "Laps · ${a.name}", load = { HistoryRepository.activityLaps(a.id) }, ranked = false, onDismiss = { lapsFor = null }) }
+    savingCourse?.let { a ->
+        var name by remember(a.id) { mutableStateOf(a.name) }
+        var loop by remember(a.id) { mutableStateOf<Boolean?>(null) }
+        var pts by remember(a.id) { mutableStateOf<List<LatLon>?>(null) }
+        LaunchedEffect(a.id) {
+            withPoints(a) { p ->
+                val l = p.map { LatLon(it.lat, it.lon) }
+                pts = l
+                loop = Courses.looksLikeLoop(l)
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { savingCourse = null },
+            title = { Text("Save as course") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Course name") })
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(selected = loop == true, onClick = { loop = true }, label = { Text("Loop") })
+                        FilterChip(selected = loop == false, onClick = { loop = false }, label = { Text("Point to point") })
+                    }
+                    Text(
+                        "A loop is timed lap after lap as you pass the start; point to point is timed start → finish.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = pts != null && (pts?.size ?: 0) >= 2, onClick = {
+                    HistoryRepository.saveCourse(name, loop == true, pts.orEmpty()) {
+                        Toast.makeText(context, "Course saved — choose it on the Path tab to time laps", Toast.LENGTH_LONG).show()
+                    }
+                    savingCourse = null
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { savingCourse = null }) { Text("Cancel") } }
         )
     }
     deleting?.let { a ->
@@ -525,4 +770,147 @@ fun activityGeoJson(a: ActivitySummary, pts: List<TrackPoint>): String {
             put("geometry", org.json.JSONObject().apply { put("type", "LineString"); put("coordinates", coords) })
         }))
     }.toString(2)
+}
+
+// ---------------- courses ----------------
+/** Saved courses: PB, best laps, show on map, rename, delete. */
+@Composable
+fun CoursesDialog(onDismiss: () -> Unit) {
+    val courses by HistoryRepository.courses.collectAsState()
+    val active by SurveyRepository.activeCourse.collectAsState()
+    var leaderboardFor by remember { mutableStateOf<CourseSummary?>(null) }
+    var renaming by remember { mutableStateOf<CourseSummary?>(null) }
+    var deleting by remember { mutableStateOf<CourseSummary?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Courses") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Save a route as a course (Finish… or History › Save as course) and choose it before " +
+                        "starting a recording: laps are timed automatically as you pass the start, with your gap to the PB.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (courses.isEmpty()) Text("No courses yet.", fontSize = 13.sp)
+                courses.forEach { c ->
+                    var menu by remember { mutableStateOf(false) }
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 10.dp)) {
+                            Column(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
+                                Text(
+                                    c.name + if (active?.id == c.id) "  ✓" else "",
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${if (c.loop) "Loop" else "A→B"} · ${AlertEngine.formatKm(c.lengthM)} · " +
+                                        (c.bestMs?.let { "PB ${formatDuration(it)} · ${c.lapCount} lap${if (c.lapCount == 1) "" else "s"}" } ?: "no laps yet"),
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Box {
+                                IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Actions") }
+                                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                    DropdownMenuItem(text = { Text(if (active?.id == c.id) "Selected for timing" else "Time laps on this") },
+                                        leadingIcon = { Icon(Icons.Default.Timer, null) },
+                                        onClick = { menu = false; SurveyRepository.selectCourse(c.id); onDismiss() })
+                                    DropdownMenuItem(text = { Text("Best times") }, leadingIcon = { Icon(Icons.Default.EmojiEvents, null) },
+                                        onClick = { menu = false; leaderboardFor = c })
+                                    DropdownMenuItem(text = { Text("Show on map") }, leadingIcon = { Icon(Icons.Default.Map, null) }, onClick = {
+                                        menu = false
+                                        HistoryRepository.background {
+                                            HistoryRepository.course(c.id)?.let { full ->
+                                                android.os.Handler(android.os.Looper.getMainLooper()).post { SurveyRepository.showCourseOnMap(full); onDismiss() }
+                                            }
+                                        }
+                                    })
+                                    DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Default.Edit, null) },
+                                        onClick = { menu = false; renaming = c })
+                                    DropdownMenuItem(
+                                        text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                                        leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                                        onClick = { menu = false; deleting = c })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    leaderboardFor?.let { c -> LapsDialog(title = "Best times · ${c.name}", load = { HistoryRepository.courseLaps(c.id) }, ranked = true, onDismiss = { leaderboardFor = null }) }
+    renaming?.let { c ->
+        var name by remember(c.id) { mutableStateOf(c.name) }
+        AlertDialog(
+            onDismissRequest = { renaming = null },
+            title = { Text("Rename course") },
+            text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { HistoryRepository.renameCourse(c.id, name); renaming = null }) { Text("Save") } },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Cancel") } }
+        )
+    }
+    deleting?.let { c ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("Delete ${c.name}?") },
+            text = { Text("Its ${c.lapCount} timed lap${if (c.lapCount == 1) "" else "s"} and PB are deleted too. Recordings in History are kept.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (SurveyRepository.activeCourse.value?.id == c.id) SurveyRepository.selectCourse(null)
+                    HistoryRepository.deleteCourse(c.id); deleting = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } }
+        )
+    }
+}
+
+/** Lap list, loaded off the main thread. [ranked] = fastest first with positions. */
+@Composable
+fun LapsDialog(title: String, load: () -> List<LapResult>, ranked: Boolean, onDismiss: () -> Unit) {
+    var laps by remember { mutableStateOf<List<LapResult>?>(null) }
+    LaunchedEffect(title) {
+        HistoryRepository.background {
+            val l = load()
+            android.os.Handler(android.os.Looper.getMainLooper()).post { laps = l }
+        }
+    }
+    val dateFmt = remember { SimpleDateFormat("d MMM yyyy HH:mm", Locale.getDefault()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        text = {
+            val list = laps
+            when {
+                list == null -> CircularProgressIndicator()
+                list.isEmpty() -> Text("No laps recorded.")
+                else -> Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    val best = list.minOf { it.elapsedMs }
+                    list.forEachIndexed { i, lap ->
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 3.dp)) {
+                            Text(if (ranked) "${i + 1}." else "Lap ${lap.lapNo}", modifier = Modifier.width(52.dp), fontSize = 13.sp)
+                            Text(
+                                formatDuration(lap.elapsedMs),
+                                fontWeight = FontWeight.Bold,
+                                color = if (lap.elapsedMs == best) Sla.go else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.width(72.dp)
+                            )
+                            Column {
+                                val pace = if (lap.distanceM >= 10) (lap.elapsedMs / 1000.0) / (lap.distanceM / 1000.0) else null
+                                Text("${AlertEngine.formatKm(lap.distanceM)} · ${Pace.format(pace)} /km", fontSize = 12.sp)
+                                Text(dateFmt.format(Date(lap.startedAt)), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
 }

@@ -64,6 +64,42 @@ object SurveyRepository {
     fun movingTimeMs(now: Long = System.currentTimeMillis()): Long =
         movingAccumulatedMs + (activeSinceMs?.let { now - it } ?: 0L)
 
+    /** Name of the recording in progress (shown in the Path panel, saved to History). */
+    private val _recordingName = MutableStateFlow("")
+    val recordingName = _recordingName.asStateFlow()
+
+    // --- Courses & laps ---
+    data class LapStatus(
+        val courseName: String?,
+        val lapNo: Int,
+        val running: Boolean,
+        val lapStartMs: Long,
+        val fraction: Double,
+        /** + behind / - ahead of the PB at the same point of the course, ms. */
+        val gapMs: Long?,
+        val offCourse: Boolean,
+        val bestMs: Long?
+    )
+
+    /** Course selected for lap timing (persists between recordings until cleared). */
+    private val _activeCourse = MutableStateFlow<Course?>(null)
+    val activeCourse = _activeCourse.asStateFlow()
+
+    private val _lapStatus = MutableStateFlow<LapStatus?>(null)
+    val lapStatus = _lapStatus.asStateFlow()
+
+    /** Laps completed in the current recording. */
+    private val _laps = MutableStateFlow<List<LapResult>>(emptyList())
+    val laps = _laps.asStateFlow()
+
+    private var courseTimer: CourseTimer? = null
+    private var pbMs: Long? = null
+    private var pbSplits: List<Long>? = null
+    // Manual laps (no course): measured on moving time and recorded distance
+    private var manualLapStartMoving = 0L
+    private var manualLapStartDist = 0.0
+    private var manualLapStartWall = 0L
+
     private val _maxAccuracyFilterMeters = MutableStateFlow(10.0f)
     val maxAccuracyFilterMeters = _maxAccuracyFilterMeters.asStateFlow()
 
@@ -173,6 +209,19 @@ object SurveyRepository {
                 TrackDecision.RejectAccuracy -> _pathRejectedFixes.value += 1
                 TrackDecision.TooClose -> {}
             }
+
+            // Course lap timing runs on every fix (not just logged points) for timing precision
+            courseTimer?.let { timer ->
+                if (fix.acc <= _maxAccuracyFilterMeters.value) {
+                    when (val e = timer.update(fix.lat, fix.lon, fix.t)) {
+                        is CourseTimer.Event.LapCompleted -> onCourseLap(e.result)
+                        is CourseTimer.Event.LapStarted ->
+                            if (e.lapNo == 1) AlertEngine.announce("Lap timing started", "${_activeCourse.value?.name ?: "Course"} · go!")
+                        null -> {}
+                    }
+                }
+                refreshLapStatus(fix.t)
+            }
         }
 
         // 2. Station occupations (Measure)
@@ -191,8 +240,8 @@ object SurveyRepository {
         _maxAccuracyFilterMeters.value = maxMeters
     }
 
-    /** Start a new recording, or resume a paused one. */
-    fun startPathRecording() {
+    /** Start a new recording (optionally named), or resume a paused one. */
+    fun startPathRecording(name: String? = null) {
         if (_isRecordingPath.value) return
         val now = System.currentTimeMillis()
         if (_currentActivityId.value == null) {
@@ -200,7 +249,16 @@ object SurveyRepository {
             _totalDistanceMeters.value = 0.0
             movingAccumulatedMs = 0L
             AlertEngine.reset()
-            _currentActivityId.value = HistoryRepository.begin(HistoryRepository.activityType.value, now)
+            val type = HistoryRepository.activityType.value
+            val n = name?.trim()?.takeIf { it.isNotEmpty() } ?: HistoryRepository.defaultName(type, now)
+            _recordingName.value = n
+            _currentActivityId.value = HistoryRepository.begin(type, now, n)
+            _laps.value = emptyList()
+            manualLapStartMoving = 0L
+            manualLapStartDist = 0.0
+            manualLapStartWall = now
+            courseTimer = _activeCourse.value?.let { CourseTimer(it) }
+            courseTimer?.let { refreshLapStatus(now) }
         }
         _pathRejectedFixes.value = 0
         activeSinceMs = now
@@ -216,14 +274,31 @@ object SurveyRepository {
         _currentActivityId.value?.let { HistoryRepository.update(it, _totalDistanceMeters.value, movingAccumulatedMs) }
     }
 
-    /** Finish: save to History and clear the map. Returns a short summary, or null if nothing was recorded. */
-    fun finishRecording(): String? {
+    fun renameRecording(name: String) {
+        val n = name.trim()
+        if (n.isEmpty()) return
+        _recordingName.value = n
+        _currentActivityId.value?.let { HistoryRepository.rename(it, n) }
+    }
+
+    /**
+     * Finish: save to History (with [name] and [type]) and clear the map, optionally also
+     * saving the route as a course. Returns a short summary, or null if nothing was recorded.
+     */
+    fun finishRecording(name: String? = null, type: String? = null, saveAsCourse: Boolean = false): String? {
         stopPathRecording()
         val id = _currentActivityId.value ?: return null
         val pts = _pathPoints.value
+        name?.let { renameRecording(it) }
+        type?.let { HistoryRepository.setType(id, it) }
         val summary = if (pts.size >= 2) {
             HistoryRepository.update(id, _totalDistanceMeters.value, movingAccumulatedMs, endedAt = pts.last().t)
-            "Saved to History · ${AlertEngine.formatKm(_totalDistanceMeters.value)} in ${formatDuration(movingAccumulatedMs)}"
+            if (saveAsCourse) {
+                val latLons = pts.map { LatLon(it.lat, it.lon) }
+                HistoryRepository.saveCourse(_recordingName.value, Courses.looksLikeLoop(latLons), latLons)
+            }
+            "Saved to History · ${AlertEngine.formatKm(_totalDistanceMeters.value)} in ${formatDuration(movingAccumulatedMs)}" +
+                (if (saveAsCourse) " · course saved" else "")
         } else {
             HistoryRepository.delete(id)
             null
@@ -234,12 +309,108 @@ object SurveyRepository {
 
     private fun resetPath() {
         _currentActivityId.value = null
+        _recordingName.value = ""
+        _laps.value = emptyList()
+        courseTimer = null
+        _lapStatus.value = null
         _isRecordingPath.value = false
         activeSinceMs = null
         movingAccumulatedMs = 0L
         _pathPoints.value = emptyList()
         _totalDistanceMeters.value = 0.0
         AlertEngine.reset()
+    }
+
+    // ---------------- courses & laps ----------------
+    /** Choose a course for lap timing (null clears it). Loads it and its PB off the main thread. */
+    fun selectCourse(id: Long?) {
+        if (id == null) {
+            _activeCourse.value = null
+            courseTimer = null
+            _lapStatus.value = null
+            pbMs = null
+            pbSplits = null
+            return
+        }
+        HistoryRepository.background {
+            val c = HistoryRepository.course(id) ?: return@background
+            val pb = HistoryRepository.personalBest(id)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                _activeCourse.value = c
+                pbMs = pb?.elapsedMs
+                pbSplits = pb?.splitsMs
+                showCourseOnMap(c)
+                // Selecting mid-recording starts timing straight away
+                if (_currentActivityId.value != null) {
+                    courseTimer = CourseTimer(c)
+                    refreshLapStatus(System.currentTimeMillis())
+                }
+            }
+        }
+    }
+
+    fun showCourseOnMap(c: Course) {
+        stopFollowing()
+        _importedOverlay.value = ImportedGeoJsonOverlay(
+            fileName = "Course: ${c.name}",
+            lines = listOf(ImportedLine(c.name, c.points)),
+            points = listOf(Triple(c.points.first().lat, c.points.first().lon, if (c.loop) "Start / finish" else "Start")) +
+                (if (c.loop) emptyList() else listOf(Triple(c.points.last().lat, c.points.last().lon, "Finish")))
+        )
+    }
+
+    private fun refreshLapStatus(now: Long) {
+        val timer = courseTimer ?: return
+        val running = timer.phase == CourseTimer.Phase.RUNNING
+        _lapStatus.value = LapStatus(
+            courseName = _activeCourse.value?.name,
+            lapNo = if (running) timer.lapNo else timer.lapNo + 1,
+            running = running,
+            lapStartMs = timer.lapStartMs,
+            fraction = timer.lapFraction(),
+            gapMs = if (running) Courses.gapToPb(pbSplits, timer.progressM, timer.elapsedMs(now)) else null,
+            offCourse = running && timer.offCourse,
+            bestMs = pbMs
+        )
+    }
+
+    private fun onCourseLap(lap: LapResult) {
+        val prevBest = pbMs
+        val isPb = prevBest == null || lap.elapsedMs < prevBest
+        _laps.value = _laps.value + lap
+        HistoryRepository.saveLap(_currentActivityId.value, lap)
+        if (isPb) {
+            pbMs = lap.elapsedMs
+            pbSplits = lap.splitsMs
+        }
+        val diff = prevBest?.let { lap.elapsedMs - it }
+        AlertEngine.announce(
+            "Lap ${lap.lapNo}: ${formatDuration(lap.elapsedMs)}" + if (isPb) " · New PB!" else "",
+            (_activeCourse.value?.name ?: "Course") +
+                (diff?.let { " · ${if (it <= 0) "−" else "+"}${formatDuration(kotlin.math.abs(it))} vs ${if (isPb) "previous " else ""}PB" } ?: " · first timed lap")
+        )
+    }
+
+    /** Manual lap split (when no course is selected): time and distance since the last lap. */
+    fun manualLap() {
+        if (_currentActivityId.value == null) return
+        val now = System.currentTimeMillis()
+        val moving = movingTimeMs(now)
+        val lap = LapResult(
+            lapNo = _laps.value.size + 1,
+            startedAt = manualLapStartWall,
+            elapsedMs = moving - manualLapStartMoving,
+            distanceM = _totalDistanceMeters.value - manualLapStartDist,
+            splitsMs = emptyList(),
+            courseId = null
+        )
+        _laps.value = _laps.value + lap
+        HistoryRepository.saveLap(_currentActivityId.value, lap)
+        manualLapStartMoving = moving
+        manualLapStartDist = _totalDistanceMeters.value
+        manualLapStartWall = now
+        val pace = if (lap.distanceM >= 10) (lap.elapsedMs / 1000.0) / (lap.distanceM / 1000.0) else null
+        AlertEngine.announce("Lap ${lap.lapNo}: ${formatDuration(lap.elapsedMs)}", "${AlertEngine.formatKm(lap.distanceM)} · ${Pace.format(pace)} /km")
     }
 
     /** Load a saved activity onto the map as an overlay (it can then be followed). */

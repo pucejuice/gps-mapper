@@ -1,11 +1,11 @@
 name: Build Android APK
 
+# Builds only when asked: "Run workflow" on the Actions tab, or pushing a
+# version tag (e.g. git tag v2.2 && git push origin v2.2). Ordinary pushes don't build.
 on:
-  push:
-    branches: [ "**" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
+  push:
+    tags: [ "v*" ]
 
 jobs:
   build:
