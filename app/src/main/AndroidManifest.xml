@@ -32,7 +32,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.GeoSurvey">
+        android:theme="@style/Theme.Wayopps">
 
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -54,7 +54,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.GeoSurvey">
+            android:theme="@style/Theme.Wayopps">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

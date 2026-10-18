@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.ColorScheme

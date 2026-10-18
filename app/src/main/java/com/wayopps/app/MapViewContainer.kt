@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import android.content.Context
 import android.graphics.Bitmap

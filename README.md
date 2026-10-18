@@ -50,6 +50,10 @@ A mapping, activity recording, distance measurement and path-following app for A
    - **Map layers** (layers button on the map): Dark (Esri street map with a dark filter, default), Streets, Satellite and Topographic, all from Esri ArcGIS Online.
    - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and layer picker.
 
+## App ID
+
+The Android application ID and code package are `com.wayopps.app` (from v2.1). Earlier builds used `com.example.geosurvey`, so v2.1 installs as a **separate app**: export anything you want to keep from the old one (History › All as GPX, Measure/Area exports) before uninstalling it.
+
 ## Build
 
 GitHub Actions (`.github/workflows/build.yml`) runs the unit tests and builds a debug APK on every push (or manually via `workflow_dispatch`). Download the `wayopps-debug-apk` artifact from the workflow run and install `app-debug.apk` on the phone (allow installs from unknown sources).

@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import kotlin.math.floor
 import kotlin.math.roundToInt

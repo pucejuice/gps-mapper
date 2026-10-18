@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import android.Manifest
 import android.app.Activity
@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val settings = getSharedPreferences("geosurvey_settings", MODE_PRIVATE)
+        val settings = getSharedPreferences("wayopps_settings", MODE_PRIVATE)
         MeasureRepository.attach(this)
         ReceiverBridge.attach(this)
         FeatureTypes.attach(this)

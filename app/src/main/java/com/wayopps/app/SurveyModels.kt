@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 /** An averaged occupation. Any station can be the origin for new lines at any time. */
 data class SurveyPoint(

@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import android.Manifest
 import android.annotation.SuppressLint

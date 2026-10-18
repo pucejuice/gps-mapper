@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -68,8 +68,8 @@ object ReceiverBridge {
         val bytes: Long = 0
     )
 
-    private const val PREFS = "geosurvey_receiver"
-    private const val ACTION_USB_PERMISSION = "com.example.geosurvey.USB_PERMISSION"
+    private const val PREFS = "wayopps_receiver"
+    private const val ACTION_USB_PERMISSION = "com.wayopps.app.USB_PERMISSION"
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     val BAUD_RATES = listOf(9600, 38400, 57600, 115200, 230400, 460800)
 

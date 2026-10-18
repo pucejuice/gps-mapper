@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "com.example.geosurvey"
+    namespace = "com.wayopps.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.geosurvey"
+        applicationId = "com.wayopps.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "2.0.1"
+        versionCode = 11
+        versionName = "2.1"
 
         vectorDrawables {
             useSupportLibrary = true

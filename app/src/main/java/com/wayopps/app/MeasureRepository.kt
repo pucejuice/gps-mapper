@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import android.content.Context
 import android.location.Location
@@ -35,7 +35,7 @@ object MeasureRepository {
     private const val STALE_FIX_MS = 3000L
     private const val MIN_LINE_M = 0.5
     private const val STORE_FILE = "measure_v1.json"
-    private const val PREFS = "geosurvey_measure"
+    private const val PREFS = "wayopps_measure"
 
     private val _points = MutableStateFlow<List<SurveyPoint>>(emptyList())
     val points = _points.asStateFlow()

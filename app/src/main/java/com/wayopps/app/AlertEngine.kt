@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

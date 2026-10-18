@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -25,9 +25,9 @@ import kotlinx.coroutines.launch
 class TrackingService : Service() {
 
     companion object {
-        private const val CHANNEL_ID = "geosurvey_tracking_channel"
+        private const val CHANNEL_ID = "wayopps_tracking_channel"
         private const val NOTIFICATION_ID = 1001
-        private const val ACTION_STOP = "com.example.geosurvey.STOP_TRACKING"
+        private const val ACTION_STOP = "com.wayopps.app.STOP_TRACKING"
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, TrackingService::class.java))

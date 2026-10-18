@@ -1,4 +1,4 @@
-package com.example.geosurvey
+package com.wayopps.app
 
 import java.text.SimpleDateFormat
 import java.util.Date
