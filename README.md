@@ -5,7 +5,7 @@ A mapping, activity recording, distance measurement and path-following app for A
 ## Modes & Features
 
 1. **Path** – record runs, rides, walks and hikes
-   - Clear recording flow: pick the activity type (and optionally a course), **Start** → **Pause** (and **Lap**) → then **Resume** to keep adding to the same track, **Finish…** to name it and save it to **History**, or **Discard**. Every recording has a name (tap it to rename at any time; defaults to e.g. "Run Sat 18 Oct 07:05"). Recording continues with the screen locked.
+   - Clear recording flow: pick the activity type (and optionally a course) and **Start new**. While recording: **Pause**, **Lap**, **Stop** (pauses and opens Save). While paused: **Resume** (continue this track), **Save…** (name + type, optionally save as a course and/or start a new recording straight after) or **Discard**. Downloads live in ☰ › History. Every recording has a name (tap it to rename at any time; defaults to e.g. "Run Sat 18 Oct 07:05"). Recording continues with the screen locked.
    - **Laps**: the **Lap** button records a manual split (time, distance, pace since the last lap).
    - **Courses & PBs**: save any route as a course (*Finish… › Also save the route as a course*, or *History › Save as course…*) — loops are detected automatically, or choose point to point. Pick the course before starting: laps are timed automatically from your closest pass of the start to your closest pass of the finish (back to back on a loop), only count when ≥80% of the course was covered, and show a live **gap to your PB** at the same point on the course (split every 50 m). Each lap plays a sound and notifies "Lap 3: 4:58 · New PB!". *☰ › Courses & PBs* lists courses with PB and a best-times table. Course PBs are kept when old activities are cleared by the retention setting.
    - Live distance, moving time, pace and speed; the path draws on the map as you go. Pace is your average over a trailing window set in **Settings › Pace measurement** (10 s, 20 s, 30 s (default), 1 min or 2 min) and the same window drives the pace alerts.
@@ -23,13 +23,15 @@ A mapping, activity recording, distance measurement and path-following app for A
    - Optional **Record height** (Settings) adds Δh and slope distance. GNSS height is uncorrected and not AHD, so it is off by default.
    - Records are kept on the phone and survive closing the app. Export writes stations (Point) and `measured_line` features (2-point LineString) with distance, uncertainty, bearing and method.
 
-3. **Area** – feature & area survey
-   - One-tap point logging with a feature type and optional note. Types are a generic mapping list (Point of interest, Landmark, Viewpoint, Junction, Gate, Bridge, Water, Tree, Building, Sign, Parking, Hazard) that you can add to, delete from or clear entirely (*Edit feature types…*).
-   - Real-time polygon **area** (m² / ha) and **perimeter** using a local tangent plane (ENU) projection; exports points and the closed polygon as GeoJSON.
+3. **Map** tab (replaces Measure and Area) — modes **Measure · Point · Line · Polygon**
+   - *Measure*: the multi-station straight line measuring described above.
+   - *Point*: map a labelled point at your GPS position or at the **crosshair** in the centre of the map (move the map to put it on the spot).
+   - *Line* / *Polygon*: start one, add corners at GPS (walk it) or at the crosshair, see live length / area + perimeter, Undo, Cancel, **Save…** with a label, type and note.
+   - Feature types: generic mapping list you can add to, delete from or clear (*Edit feature types…*).
+   - The list button shows all mapped features: tap to zoom to one, edit its label, follow a line/polygon, delete, or save/share everything as GeoJSON (with length, area, perimeter). Mapped features are kept on the phone.
 
-4. **Follow** – navigate along a loaded GeoJSON path
-   - Load a `.geojson` (folder button, top bar) containing a `LineString`, `MultiLineString` or polygon.
-   - Pick the line and direction (Start → End or End → Start), then **Start Following**.
+4. **Follow** – navigate along a path
+   - Choose from **saved courses, mapped lines/polygons, recent recordings** or a loaded file (small file button loads a `.geojson` with LineString / MultiLineString / polygons); pick the direction, then **Follow**.
    - A large **direction arrow** points to a target a few metres further along the path, so it steers you back onto the line if you drift. Instructions: *Straight ahead / Bear / Turn left or right / Turn around*.
    - Shows **distance left/right of path**, **remaining**, **covered** and **total** distance with a progress bar, and announces arrival at the end.
    - Heading comes from the GPS course when moving (≥1.5 m/s) and from the phone compass (corrected for magnetic declination) when walking slowly or standing still.
@@ -48,7 +50,7 @@ A mapping, activity recording, distance measurement and path-following app for A
    - **GNSS status badge:** `EXT` for external (mock) receiver coordinates or `GPS` for the phone's own GPS, with horizontal accuracy, coloured green (RTK) / blue (sub-metre) / orange / red.
    - **Map-first layout:** the map fills the screen; each mode has a compact two-row control panel above the mode tabs at the bottom. Save / Share / Clear live behind a single save button.
    - **☰ Menu:** load or remove a GeoJSON overlay, and **Settings** (dark/light theme, path accuracy gate, station hold time / epochs / gate, record height).
-   - **Look:** SLA colour palette, with the faceted slate Voronoi mesh from the SLA / ingeniir cover art on the top bar, the station hold screen, the Records header and the launcher icon.
+   - **Look:** SLA colour palette, with the faceted slate Voronoi mesh on the top bar, the station hold screen, sheet headers and the launcher icon (white pin-and-compass logo on the mesh).
    - **Map layers** (layers button on the map): Dark (Esri street map with a dark filter, default), Streets, Satellite and Topographic, all from Esri ArcGIS Online.
    - **Floating Map Controls:** centre on GNSS fix, fit to survey bounds, and layer picker.
 

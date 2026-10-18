@@ -152,8 +152,8 @@ fun PathPanel(
         val gateText = if (gate < 1f) "%.1f".format(gate) else "%.0f".format(gate)
         val (status, warn) = when {
             !hasRecording -> (if (course != null) "Timing laps on ${course!!.name}. " else "") +
-                "Start a new recording; finish it to save to History." to false
-            !isRecording -> "Paused — Resume keeps adding to this track; Finish saves it." to false
+                "Start new begins a fresh track. Saved tracks and downloads are in ☰ › History." to false
+            !isRecording -> "Paused — Resume continues this track · Save… names it and stores it in History · Discard throws it away" to false
             currentLocation == null -> "Recording · waiting for GPS…" to true
             acc != null && acc > gate ->
                 "Fix ±${"%.1f".format(acc)} m is worse than the ±$gateText m gate — not logging (Settings)" to true
@@ -220,7 +220,7 @@ fun PathPanel(
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null)
-                        Text("Start", maxLines = 1, softWrap = false)
+                        Text("Start new", maxLines = 1, softWrap = false)
                     }
                 }
                 isRecording -> {
@@ -242,6 +242,15 @@ fun PathPanel(
                             Text("Lap", maxLines = 1)
                         }
                     }
+                    // Stop: pause and go straight to save / discard
+                    OutlinedButton(
+                        onClick = { SurveyRepository.stopPathRecording(); showFinish = true },
+                        contentPadding = PaddingValues(horizontal = 10.dp)
+                    ) {
+                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Stop", maxLines = 1)
+                    }
                 }
                 else -> {
                     Button(
@@ -258,11 +267,15 @@ fun PathPanel(
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.Flag, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Finish…", maxLines = 1, softWrap = false)
+                        Text("Save…", maxLines = 1, softWrap = false)
                     }
-                    PanelIcon(Icons.Default.Delete, "Discard recording", true) { showDiscard = true }
+                    OutlinedButton(onClick = { showDiscard = true }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.width(2.dp))
+                        Text("Discard", color = MaterialTheme.colorScheme.error, maxLines = 1, softWrap = false)
+                    }
                 }
             }
             BadgedBox(badge = { if (alertsOn) Badge() }) {
@@ -301,9 +314,10 @@ fun PathPanel(
         var finishType by remember { mutableStateOf(type) }
         val looksLoop = remember(pathPoints.size) { Courses.looksLikeLoop(pathPoints.map { LatLon(it.lat, it.lon) }) }
         var asCourse by remember { mutableStateOf(false) }
+        var startNew by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showFinish = false },
-            title = { Text("Finish & save") },
+            title = { Text("Save this recording") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -316,6 +330,10 @@ fun PathPanel(
                         HistoryRepository.ACTIVITY_TYPES.forEach { t ->
                             FilterChip(selected = finishType == t, onClick = { finishType = t }, label = { Text(t, fontSize = 12.sp) })
                         }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { startNew = !startNew }) {
+                        Checkbox(checked = startNew, onCheckedChange = { startNew = it })
+                        Text("Start a new recording straight after")
                     }
                     if (course == null) {
                         Row(
@@ -341,9 +359,12 @@ fun PathPanel(
                     val msg = SurveyRepository.finishRecording(text, finishType, asCourse) ?: "Nothing recorded — discarded"
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     showFinish = false
+                    if (startNew) SurveyRepository.startPathRecording()
                 }) { Text("Save") }
             },
-            dismissButton = { TextButton(onClick = { showFinish = false }) { Text("Keep recording") } }
+            dismissButton = {
+                TextButton(onClick = { showFinish = false }) { Text("Back") }
+            }
         )
     }
 }

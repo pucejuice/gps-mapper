@@ -109,15 +109,7 @@ object SurveyRepository {
 
     // --- Mode 2: Measure state lives in MeasureRepository ---
 
-    // --- Mode 3: Feature & Area Survey State ---
-    private val _featurePoints = MutableStateFlow<List<SurveyFeaturePoint>>(emptyList())
-    val featurePoints = _featurePoints.asStateFlow()
-
-    private val _polygonAreaSqMeters = MutableStateFlow(0.0)
-    val polygonAreaSqMeters = _polygonAreaSqMeters.asStateFlow()
-
-    private val _polygonPerimeterMeters = MutableStateFlow(0.0)
-    val polygonPerimeterMeters = _polygonPerimeterMeters.asStateFlow()
+    // --- Map features live in MapRepository ---
 
     // --- Imported GeoJSON Overlay ---
     private val _importedOverlay = MutableStateFlow<ImportedGeoJsonOverlay?>(null)
@@ -445,85 +437,6 @@ object SurveyRepository {
         resetPath()
     }
 
-    // --- Feature & Area Survey Controls ---
-    fun captureFeaturePoint(category: String, note: String, includeInPolygon: Boolean = true) {
-        val loc = _currentLocation.value ?: return
-        val newPt = SurveyFeaturePoint(
-            category = category,
-            note = note.ifBlank { "$category #${_featurePoints.value.size + 1}" },
-            latitude = loc.latitude,
-            longitude = loc.longitude,
-            altitude = loc.altitude,
-            accuracy = loc.accuracy,
-            includeInAreaPolygon = includeInPolygon
-        )
-        val updated = _featurePoints.value + newPt
-        _featurePoints.value = updated
-        recalculatePolygonMetrics(updated)
-    }
-
-    fun undoLastFeaturePoint() {
-        val current = _featurePoints.value
-        if (current.isNotEmpty()) {
-            val updated = current.dropLast(1)
-            _featurePoints.value = updated
-            recalculatePolygonMetrics(updated)
-        }
-    }
-
-    fun clearFeatures() {
-        _featurePoints.value = emptyList()
-        _polygonAreaSqMeters.value = 0.0
-        _polygonPerimeterMeters.value = 0.0
-    }
-
-    private fun recalculatePolygonMetrics(points: List<SurveyFeaturePoint>) {
-        val polyPts = points.filter { it.includeInAreaPolygon }
-        if (polyPts.size < 2) {
-            _polygonPerimeterMeters.value = 0.0
-            _polygonAreaSqMeters.value = 0.0
-            return
-        }
-
-        // Calculate Perimeter
-        var perimeter = 0.0
-        for (i in 0 until polyPts.size) {
-            val a = polyPts[i]
-            val b = polyPts[(i + 1) % polyPts.size]
-            val d = FloatArray(1)
-            Location.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude, d)
-            if (polyPts.size > 2 || i == 0) {
-                perimeter += d[0]
-            }
-        }
-        _polygonPerimeterMeters.value = perimeter
-
-        if (polyPts.size < 3) {
-            _polygonAreaSqMeters.value = 0.0
-            return
-        }
-
-        // Local Tangent Plane (ENU meters) Shoelace Area Formula
-        val originLatRad = Math.toRadians(polyPts[0].latitude)
-        val originLon = polyPts[0].longitude
-        val originLat = polyPts[0].latitude
-        val metersPerDegLat = 111132.92 - 559.82 * cos(2 * originLatRad) + 1.175 * cos(4 * originLatRad)
-        val metersPerDegLon = 111412.84 * cos(originLatRad) - 93.5 * cos(3 * originLatRad)
-
-        val xy = polyPts.map { pt ->
-            val x = (pt.longitude - originLon) * metersPerDegLon
-            val y = (pt.latitude - originLat) * metersPerDegLat
-            Pair(x, y)
-        }
-
-        var areaSum = 0.0
-        for (i in xy.indices) {
-            val j = (i + 1) % xy.size
-            areaSum += (xy[i].first * xy[j].second) - (xy[j].first * xy[i].second)
-        }
-        _polygonAreaSqMeters.value = abs(areaSum) / 2.0
-    }
-
     // --- GeoJSON Import Parser ---
     fun importGeoJson(fileName: String, jsonText: String): Boolean {
         return try {
@@ -606,13 +519,20 @@ object SurveyRepository {
     }
 
     // --- Follow Path Controls ---
+    /** Follow a line from the loaded file. */
     fun startFollowing(lineIndex: Int, reversed: Boolean) {
         val line = _importedOverlay.value?.lines?.getOrNull(lineIndex) ?: return
-        val path = if (reversed) line.points.reversed() else line.points
+        startFollowingPath(line.name, line.points, reversed)
+    }
+
+    /** Follow any path: a saved course, a past recording, a mapped line or a file line. */
+    fun startFollowingPath(name: String, points: List<LatLon>, reversed: Boolean) {
+        if (points.size < 2) return
+        val path = if (reversed) points.reversed() else points
         val newFollower = PathFollower(path)
         follower = newFollower
         val guidance = _currentLocation.value?.let { newFollower.update(it.latitude, it.longitude) }
-        _followSession.value = FollowSession(lineIndex, reversed, newFollower.points, guidance)
+        _followSession.value = FollowSession(name, reversed, points, newFollower.points, guidance)
     }
 
     fun stopFollowing() {
@@ -654,66 +574,4 @@ object SurveyRepository {
         return root.toString(2)
     }
 
-    fun exportFeaturesGeoJson(): String {
-        val root = JSONObject().apply { put("type", "FeatureCollection") }
-        val features = JSONArray()
-
-        val pts = _featurePoints.value
-        for (pt in pts) {
-            val f = JSONObject().apply {
-                put("type", "Feature")
-                put("properties", JSONObject().apply {
-                    put("category", pt.category)
-                    put("note", pt.note)
-                    put("altitude_m", "%.2f".format(pt.altitude))
-                    put("accuracy_m", "%.3f".format(pt.accuracy))
-                })
-                put("geometry", JSONObject().apply {
-                    put("type", "Point")
-                    put("coordinates", JSONArray().apply {
-                        put(pt.longitude)
-                        put(pt.latitude)
-                        put(pt.altitude)
-                    })
-                })
-            }
-            features.put(f)
-        }
-
-        val polyPts = pts.filter { it.includeInAreaPolygon }
-        if (polyPts.size >= 3) {
-            val polyFeature = JSONObject().apply {
-                put("type", "Feature")
-                put("properties", JSONObject().apply {
-                    put("featureType", "SurveyPolygon")
-                    put("area_sq_m", "%.2f".format(_polygonAreaSqMeters.value))
-                    put("area_hectares", "%.4f".format(_polygonAreaSqMeters.value / 10000.0))
-                    put("perimeter_m", "%.2f".format(_polygonPerimeterMeters.value))
-                })
-                put("geometry", JSONObject().apply {
-                    put("type", "Polygon")
-                    val ring = JSONArray()
-                    for (p in polyPts) {
-                        ring.put(JSONArray().apply {
-                            put(p.longitude)
-                            put(p.latitude)
-                            put(p.altitude)
-                        })
-                    }
-                    // Close GeoJSON Polygon ring
-                    val first = polyPts.first()
-                    ring.put(JSONArray().apply {
-                        put(first.longitude)
-                        put(first.latitude)
-                        put(first.altitude)
-                    })
-                    put("coordinates", JSONArray().apply { put(ring) })
-                })
-            }
-            features.put(polyFeature)
-        }
-
-        root.put("features", features)
-        return root.toString(2)
-    }
 }

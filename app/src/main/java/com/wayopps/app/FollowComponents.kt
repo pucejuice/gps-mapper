@@ -15,6 +15,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -158,14 +163,32 @@ fun FollowPanel(
     onLoadGeoJson: () -> Unit
 ) {
     val magneticAzimuth by rememberCompassAzimuth()
-    var selectedLine by remember(overlay) { mutableStateOf(overlay?.lines?.indexOfFirst { it.points.size >= 2 }?.coerceAtLeast(0) ?: 0) }
-    var reversed by remember(overlay) { mutableStateOf(false) }
-    var showLines by remember { mutableStateOf(false) }
+    val courses by HistoryRepository.courses.collectAsState()
+    val activities by HistoryRepository.activities.collectAsState()
+    val features by MapRepository.features.collectAsState()
+    var chosen by remember { mutableStateOf<Pair<String, List<LatLon>>?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var reversed by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
 
-    val lineLengths = remember(overlay) {
-        overlay?.lines.orEmpty().map { PathFollower(it.points).totalMeters }
+    /** Pick a path: show it on the map and remember it for Go. DB paths load off the main thread. */
+    fun choose(name: String, load: () -> List<LatLon>, fromDb: Boolean) {
+        showPicker = false
+        val apply = { pts: List<LatLon> ->
+            loading = false
+            if (pts.size >= 2) {
+                chosen = name to pts
+                MapViewState.focus(pts)
+            }
+        }
+        if (fromDb) {
+            loading = true
+            HistoryRepository.background {
+                val pts = load()
+                android.os.Handler(android.os.Looper.getMainLooper()).post { apply(pts) }
+            }
+        } else apply(load())
     }
-    val hasLines = overlay?.lines.orEmpty().any { it.points.size >= 2 }
 
     Column(
         modifier = Modifier
@@ -173,75 +196,110 @@ fun FollowPanel(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        if (!hasLines) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    "Load a .geojson with a line to follow.",
-                    fontSize = 13.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                Button(onClick = onLoadGeoJson) {
-                    Icon(Icons.Default.FileOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Load", maxLines = 1)
-                }
-            }
-            return@Column
-        }
-
         if (followSession == null) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                // Line picker
+                // Main choice: saved courses, past recordings, mapped lines, loaded file
                 Box(modifier = Modifier.weight(1f)) {
-                    val line = overlay?.lines?.getOrNull(selectedLine)
                     OutlinedButton(
-                        onClick = { showLines = true },
+                        onClick = { showPicker = true },
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        if (loading) CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                         Text(
-                            "${line?.name ?: "Line"} · ${formatDistance(lineLengths.getOrElse(selectedLine) { 0.0 })}",
+                            chosen?.let { (n, pts) -> "$n · ${formatDistance(PathFollower(pts).totalMeters)}" } ?: "Choose a path to follow",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
                         Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                     }
-                    DropdownMenu(expanded = showLines, onDismissRequest = { showLines = false }) {
-                        overlay?.lines?.forEachIndexed { index, l ->
-                            if (l.points.size >= 2) {
+                    DropdownMenu(expanded = showPicker, onDismissRequest = { showPicker = false }) {
+                        if (courses.isNotEmpty()) {
+                            MenuHeader("COURSES")
+                            courses.forEach { c ->
                                 DropdownMenuItem(
-                                    text = { Text("${l.name} (${formatDistance(lineLengths.getOrElse(index) { 0.0 })})") },
-                                    onClick = { selectedLine = index; showLines = false }
+                                    text = { Text("${c.name} · ${formatDistance(c.lengthM)}") },
+                                    leadingIcon = { Icon(Icons.Default.Flag, null) },
+                                    onClick = { choose(c.name, { HistoryRepository.course(c.id)?.points.orEmpty() }, fromDb = true) }
                                 )
                             }
                         }
+                        val lines = features.filter { it.kind != FeatureKind.POINT && it.vertices.size >= 2 }
+                        if (lines.isNotEmpty()) {
+                            MenuHeader("MAPPED")
+                            lines.forEach { f ->
+                                DropdownMenuItem(
+                                    text = { Text("${f.label} · ${formatDistance(f.lengthM)}") },
+                                    leadingIcon = { Icon(if (f.kind == FeatureKind.LINE) Icons.Default.Timeline else Icons.Default.CropSquare, null) },
+                                    onClick = {
+                                        choose(f.label, {
+                                            val p = f.vertices.map { LatLon(it.lat, it.lon) }
+                                            if (f.kind == FeatureKind.POLYGON) p + p.first() else p
+                                        }, fromDb = false)
+                                    }
+                                )
+                            }
+                        }
+                        if (activities.isNotEmpty()) {
+                            MenuHeader("RECENT RECORDINGS")
+                            activities.take(15).forEach { a ->
+                                DropdownMenuItem(
+                                    text = { Text("${a.name} · ${formatDistance(a.distanceM)}") },
+                                    leadingIcon = { Icon(Icons.Default.History, null) },
+                                    onClick = { choose(a.name, { HistoryRepository.points(a.id).map { LatLon(it.lat, it.lon) } }, fromDb = true) }
+                                )
+                            }
+                        }
+                        val fileLines = overlay?.lines.orEmpty().filter { it.points.size >= 2 }
+                        if (fileLines.isNotEmpty()) {
+                            MenuHeader("LOADED FILE")
+                            fileLines.forEach { l ->
+                                DropdownMenuItem(
+                                    text = { Text("${l.name} · ${formatDistance(PathFollower(l.points).totalMeters)}") },
+                                    leadingIcon = { Icon(Icons.Default.Description, null) },
+                                    onClick = { choose(l.name, { l.points }, fromDb = false) }
+                                )
+                            }
+                        }
+                        if (courses.isEmpty() && lines.isEmpty() && activities.isEmpty() && fileLines.isEmpty()) {
+                            Text(
+                                "Nothing saved yet — record or map a path, or load a file.",
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
                     }
                 }
-                // Direction toggle
-                FilledTonalButton(
-                    onClick = { reversed = !reversed },
-                    contentPadding = PaddingValues(horizontal = 8.dp)
-                ) {
-                    Icon(Icons.Default.SwapHoriz, contentDescription = "Swap direction", modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(2.dp))
-                    Text(if (reversed) "E→S" else "S→E", maxLines = 1, softWrap = false)
+                // Secondary: load a GeoJSON file
+                IconButton(onClick = onLoadGeoJson) {
+                    Icon(Icons.Default.FileOpen, contentDescription = "Load a GeoJSON file")
                 }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilledTonalButton(onClick = { reversed = !reversed }, contentPadding = PaddingValues(horizontal = 10.dp)) {
+                    Icon(Icons.Default.SwapHoriz, contentDescription = "Swap direction", modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (reversed) "End → start" else "Start → end", maxLines = 1, softWrap = false)
+                }
+                Spacer(Modifier.weight(1f))
                 Button(
-                    onClick = { SurveyRepository.startFollowing(selectedLine, reversed) },
+                    onClick = { chosen?.let { (n, pts) -> SurveyRepository.startFollowingPath(n, pts, reversed) } },
+                    enabled = chosen != null,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE65100), contentColor = Color.White),
-                    contentPadding = PaddingValues(horizontal = 10.dp)
+                    contentPadding = PaddingValues(horizontal = 14.dp)
                 ) {
                     Icon(Icons.Default.Navigation, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Go", maxLines = 1, softWrap = false)
+                    Text("Follow", maxLines = 1, softWrap = false)
                 }
             }
             return@Column
@@ -312,7 +370,7 @@ fun FollowPanel(
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 FilledTonalIconButton(
-                    onClick = { SurveyRepository.startFollowing(followSession.lineIndex, !followSession.reversed) },
+                    onClick = { SurveyRepository.startFollowingPath(followSession.name, followSession.sourcePoints, !followSession.reversed) },
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(Icons.Default.SwapHoriz, contentDescription = "Reverse direction")
@@ -334,3 +392,12 @@ fun FollowPanel(
         }
     }
 }
+
+@Composable
+private fun MenuHeader(text: String) = Text(
+    text,
+    fontSize = 11.sp,
+    letterSpacing = 1.sp,
+    color = MaterialTheme.colorScheme.primary,
+    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+)

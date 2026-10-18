@@ -55,7 +55,8 @@ fun OsmMapView(
     measureLines: List<MeasuredLine>,
     originId: String?,
     showMeasureGuide: Boolean,
-    featurePoints: List<SurveyFeaturePoint>,
+    mapFeatures: List<MapFeature>,
+    draft: MapRepository.Draft?,
     importedOverlay: ImportedGeoJsonOverlay?,
     followSession: FollowSession?,
     mapStyle: MapStyle,
@@ -123,6 +124,35 @@ fun OsmMapView(
         mapView.invalidate()
     }
 
+    // Keep MapViewState.center (the crosshair) up to date as the map moves
+    DisposableEffect(mapView) {
+        val listener = object : org.osmdroid.events.MapListener {
+            override fun onScroll(event: org.osmdroid.events.ScrollEvent?): Boolean {
+                MapViewState.center.value = mapView.mapCenter.let { LatLon(it.latitude, it.longitude) }
+                return false
+            }
+            override fun onZoom(event: org.osmdroid.events.ZoomEvent?): Boolean {
+                MapViewState.center.value = mapView.mapCenter.let { LatLon(it.latitude, it.longitude) }
+                return false
+            }
+        }
+        mapView.addMapListener(listener)
+        onDispose { mapView.removeMapListener(listener) }
+    }
+
+    // Zoom to something on request (e.g. "Show" on a mapped feature or course)
+    val focus by MapViewState.focusRequest.collectAsState()
+    LaunchedEffect(focus) {
+        val pts = focus ?: return@LaunchedEffect
+        if (pts.size == 1) {
+            mapView.controller.animateTo(GeoPoint(pts[0].lat, pts[0].lon))
+            if (mapView.zoomLevelDouble < 18.0) mapView.controller.setZoom(18.5)
+        } else {
+            mapView.zoomToBoundingBox(BoundingBox.fromGeoPoints(pts.map { GeoPoint(it.lat, it.lon) }), true, 80)
+        }
+        MapViewState.focusRequest.value = null
+    }
+
     LaunchedEffect(mapStyle) {
         mapView.setTileSource(mapStyle.tileSource())
         mapView.overlayManager.tilesOverlay.setColorFilter(mapStyle.tileColorFilter())
@@ -137,7 +167,8 @@ fun OsmMapView(
         measureLines,
         originId,
         showMeasureGuide,
-        featurePoints.size,
+        mapFeatures,
+        draft,
         importedOverlay,
         followSession
     ) {
@@ -145,11 +176,10 @@ fun OsmMapView(
 
         // 1. Imported GeoJSON Overlay (Purple)
         importedOverlay?.let { overlay ->
-            overlay.lines.forEachIndexed { index, line ->
-                val isFollowed = followSession?.lineIndex == index
+            overlay.lines.forEach { line ->
                 val poly = Polyline().apply {
-                    outlinePaint.color = Color.parseColor(if (isFollowed) "#FB8C00" else "#8E24AA")
-                    outlinePaint.strokeWidth = if (isFollowed) 12f else 6f
+                    outlinePaint.color = Color.parseColor("#8E24AA")
+                    outlinePaint.strokeWidth = 6f
                     setPoints(line.points.map { GeoPoint(it.lat, it.lon) })
                 }
                 mapView.overlays.add(poly)
@@ -164,33 +194,66 @@ fun OsmMapView(
             }
         }
 
-        // 2. Feature & Area Survey Polygon (Green)
-        val polyVertices = featurePoints.filter { it.includeInAreaPolygon }
-        if (polyVertices.size >= 3) {
-            val polygon = Polygon().apply {
-                fillPaint.color = Color.argb(55, 46, 125, 50)
-                outlinePaint.color = Color.parseColor("#2E7D32")
-                outlinePaint.strokeWidth = 5f
-                points = polyVertices.map { GeoPoint(it.latitude, it.longitude) }
+        // 2. Mapped features (amber): polygons, lines, points, each with its label
+        val amber = Color.parseColor("#FFB020")
+        val showFeatureLabels = mapView.zoomLevelDouble >= 16.0
+        for (f in mapFeatures) {
+            val geo = f.vertices.map { GeoPoint(it.lat, it.lon) }
+            when (f.kind) {
+                FeatureKind.POLYGON -> mapView.overlays.add(Polygon().apply {
+                    fillPaint.color = Color.argb(50, 255, 176, 32)
+                    outlinePaint.color = amber
+                    outlinePaint.strokeWidth = 5f
+                    points = geo
+                    setInfoWindow(null)
+                })
+                FeatureKind.LINE -> mapView.overlays.add(Polyline().apply {
+                    outlinePaint.color = amber
+                    outlinePaint.strokeWidth = 6f
+                    outlinePaint.strokeCap = Paint.Cap.ROUND
+                    setPoints(geo)
+                    setInfoWindow(null)
+                })
+                FeatureKind.POINT -> {}
             }
-            mapView.overlays.add(polygon)
-        } else if (polyVertices.size == 2) {
-            val line = Polyline().apply {
-                outlinePaint.color = Color.parseColor("#2E7D32")
-                outlinePaint.strokeWidth = 5f
-                setPoints(polyVertices.map { GeoPoint(it.latitude, it.longitude) })
+            val at = FeatureGeometry.labelPosition(f) ?: continue
+            if (f.kind == FeatureKind.POINT) {
+                val (drawable, anchorX) = stationIcon(context, if (showFeatureLabels) f.label else "", "#FFB020")
+                mapView.overlays.add(Marker(mapView).apply {
+                    position = GeoPoint(at.lat, at.lon)
+                    icon = drawable
+                    setAnchor(anchorX, Marker.ANCHOR_CENTER)
+                    setOnMarkerClickListener { _, _ -> true }
+                })
+            } else if (showFeatureLabels) {
+                mapView.overlays.add(Marker(mapView).apply {
+                    position = GeoPoint(at.lat, at.lon)
+                    icon = distanceLabelIcon(context, f.label)
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    setOnMarkerClickListener { _, _ -> true }
+                })
             }
-            mapView.overlays.add(line)
         }
 
-        // Feature Markers
-        for (fp in featurePoints) {
-            val marker = Marker(mapView).apply {
-                position = GeoPoint(fp.latitude, fp.longitude)
-                title = "${fp.category}: ${fp.note} (±${"%.2f".format(fp.accuracy)}m)"
-                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+        // 2b. Line / polygon being drawn (dashed, with vertex dots)
+        draft?.let { d ->
+            val geo = d.vertices.map { GeoPoint(it.lat, it.lon) }
+            if (geo.size >= 2) {
+                mapView.overlays.add(Polyline().apply {
+                    outlinePaint.color = amber
+                    outlinePaint.strokeWidth = 5f
+                    outlinePaint.pathEffect = DashPathEffect(floatArrayOf(16f, 10f), 0f)
+                    setPoints(if (d.kind == FeatureKind.POLYGON && geo.size >= 3) geo + geo.first() else geo)
+                })
             }
-            mapView.overlays.add(marker)
+            for (g in geo) {
+                mapView.overlays.add(Marker(mapView).apply {
+                    position = g
+                    icon = stationIcon(context, "", "#FFB020").first
+                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                    setOnMarkerClickListener { _, _ -> true }
+                })
+            }
         }
 
         // 3. Recorded Path Polyline (Blue)
@@ -271,6 +334,16 @@ fun OsmMapView(
             mapView.overlays.add(marker)
         }
 
+        // 5a. Path being followed (orange, on top)
+        followSession?.let { fs ->
+            mapView.overlays.add(Polyline().apply {
+                outlinePaint.color = Color.parseColor("#FB8C00")
+                outlinePaint.strokeWidth = 12f
+                outlinePaint.strokeCap = Paint.Cap.ROUND
+                setPoints(fs.path.map { GeoPoint(it.lat, it.lon) })
+            })
+        }
+
         // 5b. Follow Guidance: dashed line from live fix to the look-ahead target
         val guidance = followSession?.guidance
         if (guidance != null && currentLocation != null && !guidance.arrived) {
@@ -348,7 +421,7 @@ fun OsmMapView(
                     val allGeoPoints = mutableListOf<GeoPoint>()
                     allGeoPoints.addAll(pathPoints.map { GeoPoint(it.lat, it.lon) })
                     allGeoPoints.addAll(stations.map { GeoPoint(it.lat, it.lon) })
-                    allGeoPoints.addAll(featurePoints.map { GeoPoint(it.latitude, it.longitude) })
+                    allGeoPoints.addAll(mapFeatures.flatMap { f -> f.vertices.map { GeoPoint(it.lat, it.lon) } })
                     importedOverlay?.lines?.flatMap { it.points }?.forEach {
                         allGeoPoints.add(GeoPoint(it.lat, it.lon))
                     }

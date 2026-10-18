@@ -44,17 +44,6 @@ data class OccupationProgress(
     val waitingForFreshFix: Boolean
 )
 
-data class SurveyFeaturePoint(
-    val id: Long = System.currentTimeMillis(),
-    val category: String,
-    val note: String,
-    val latitude: Double,
-    val longitude: Double,
-    val altitude: Double,
-    val accuracy: Float,
-    val includeInAreaPolygon: Boolean = true
-)
-
 data class ImportedLine(
     val name: String,
     val points: List<LatLon>
@@ -67,8 +56,11 @@ data class ImportedGeoJsonOverlay(
 )
 
 data class FollowSession(
-    val lineIndex: Int,
+    val name: String,
     val reversed: Boolean,
+    /** The path as chosen (before reversing), so it can be flipped. */
+    val sourcePoints: List<LatLon>,
+    /** The path being followed (reversed if [reversed]). */
     val path: List<LatLon>,
     val guidance: FollowGuidance? = null
 )

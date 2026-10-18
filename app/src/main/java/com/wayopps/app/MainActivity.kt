@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
         FeatureTypes.attach(this)
         AlertEngine.attach(this)
         HistoryRepository.attach(this, SurveyRepository.currentActivityId.value)
+        MapRepository.attach(this)
         handleUsbAttach(intent)
         setContent {
             var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", true)) }
@@ -233,11 +234,14 @@ fun MainScreen(
     // Facing direction for the location marker: GPS course when moving, compass otherwise
     val magneticAzimuth by rememberCompassAzimuth()
     val heading = resolveTrueHeading(curLocation, magneticAzimuth)?.first
-    val featurePoints by SurveyRepository.featurePoints.collectAsState()
+    val mapFeatures by MapRepository.features.collectAsState()
+    val mapDraft by MapRepository.draft.collectAsState()
     val importedOverlay by SurveyRepository.importedOverlay.collectAsState()
     val followSession by SurveyRepository.followSession.collectAsState()
 
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Path, 1 = Measure, 2 = Area, 3 = Follow
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Record, 1 = Map, 2 = Follow
+    var mapMode by remember { mutableStateOf(MapMode.MEASURE) }
+    var showFeatures by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showRecords by remember { mutableStateOf(false) }
@@ -281,6 +285,12 @@ fun MainScreen(
     if (showAlerts) AlertsDialog(onDismiss = { showAlerts = false })
     if (showHistory) HistorySheet(onDismiss = { showHistory = false }, onSave = onSaveGeoJson, onShare = onShareGeoJson)
     if (showCourses) CoursesDialog(onDismiss = { showCourses = false })
+    if (showFeatures) FeaturesSheet(
+        onDismiss = { showFeatures = false },
+        onSave = onSaveGeoJson,
+        onShare = onShareGeoJson,
+        onFollow = { selectedTab = 2 }
+    )
 
     if (showSettings) {
         SettingsDialog(
@@ -429,8 +439,9 @@ fun MainScreen(
                     stations = stations,
                     measureLines = measureLines,
                     originId = originId,
-                    showMeasureGuide = selectedTab == 1,
-                    featurePoints = featurePoints,
+                    showMeasureGuide = selectedTab == 1 && mapMode == MapMode.MEASURE,
+                    mapFeatures = mapFeatures,
+                    draft = mapDraft,
                     importedOverlay = importedOverlay,
                     followSession = followSession,
                     mapStyle = mapStyle,
@@ -448,15 +459,27 @@ fun MainScreen(
                             .padding(8.dp)
                             .widthIn(max = 220.dp)
                     ) {
-                        Text(
-                            overlay.fileName,
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                overlay.fileName,
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .padding(start = 8.dp, top = 4.dp, bottom = 4.dp)
+                            )
+                            IconButton(onClick = { SurveyRepository.clearImportedOverlay() }, modifier = Modifier.size(26.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "Remove from map", tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                        }
                     }
+                }
+
+                // Crosshair for placing points / vertices at the map centre
+                if (selectedTab == 1 && mapMode != MapMode.MEASURE) {
+                    MapCrosshair(modifier = Modifier.align(Alignment.Center))
                 }
             }
 
@@ -468,9 +491,14 @@ fun MainScreen(
                 Column {
                     when (selectedTab) {
                         0 -> PathPanel(curLocation, { showAlerts = true }, { showCourses = true })
-                        1 -> MeasurePanel(curLocation, { showRecords = true }, onSaveGeoJson, onShareGeoJson)
-                        2 -> AreaPanel(curLocation, onSaveGeoJson, onShareGeoJson)
-                        3 -> FollowPanel(importedOverlay, followSession, curLocation, onImportGeoJson)
+                        1 -> MapPanel(
+                            curLocation, mapMode, { mapMode = it },
+                            onShowRecords = { showRecords = true },
+                            onShowFeatures = { showFeatures = true },
+                            onSave = onSaveGeoJson,
+                            onShare = onShareGeoJson
+                        )
+                        2 -> FollowPanel(importedOverlay, followSession, curLocation, onImportGeoJson)
                     }
 
                     // Mode tabs along the bottom
@@ -479,9 +507,8 @@ fun MainScreen(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
                     ) {
                         listOf(
-                            "Path" to Icons.Default.Route,
-                            "Measure" to Icons.Default.Straighten,
-                            "Area" to Icons.Default.SquareFoot,
+                            "Record" to Icons.Default.FiberManualRecord,
+                            "Map" to Icons.Default.Map,
                             "Follow" to Icons.Default.Navigation
                         ).forEachIndexed { index, (label, icon) ->
                             Tab(selected = selectedTab == index, onClick = { selectedTab = index }) {
