@@ -96,75 +96,7 @@ private fun PanelColumn(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
-// ---------------- Path ----------------
-@Composable
-fun PathPanel(
-    currentLocation: Location?,
-    onSave: (String, String) -> Unit,
-    onShare: (String, String) -> Unit
-) {
-    val isRecording by SurveyRepository.isRecordingPath.collectAsState()
-    val pathPoints by SurveyRepository.pathPoints.collectAsState()
-    val totalDistance by SurveyRepository.totalDistanceMeters.collectAsState()
-    val gate by SurveyRepository.maxAccuracyFilterMeters.collectAsState()
-    val rejected by SurveyRepository.pathRejectedFixes.collectAsState()
-
-    PanelColumn {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Stat("Distance", formatMeters(totalDistance))
-            Stat("Points", "${pathPoints.size}")
-            Stat("Elev", currentLocation?.altitude?.let { "${"%.1f".format(it)} m" } ?: "--")
-            Stat("Speed", currentLocation?.speed?.let { "${"%.1f".format(it * 3.6f)} km/h" } ?: "--")
-        }
-        // Recording status, so it's obvious when fixes are being skipped
-        val acc = currentLocation?.accuracy
-        val gateText = if (gate < 1f) "%.1f".format(gate) else "%.0f".format(gate)
-        val (status, warn) = when {
-            !isRecording && pathPoints.isEmpty() -> "Press Record and walk the path." to false
-            !isRecording -> "Paused · ${pathPoints.size} points" to false
-            currentLocation == null -> "Recording · waiting for GPS…" to true
-            acc != null && acc > gate ->
-                "Recording · fix ±${"%.1f".format(acc)} m is worse than the ±$gateText m gate — not logging (Settings)" to true
-            else -> "● Recording · fix ±${"%.1f".format(acc ?: 0f)} m · gate ±$gateText m" +
-                (if (rejected > 0) " · $rejected skipped" else "") to false
-        }
-        Text(
-            status,
-            fontSize = 12.sp,
-            color = if (warn) Sla.warn else if (isRecording) Sla.go else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Button(
-                onClick = {
-                    if (isRecording) SurveyRepository.stopPathRecording() else SurveyRepository.startPathRecording()
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isRecording) Color(0xFFC62828) else Color(0xFF2E7D32),
-                    contentColor = Color.White
-                ),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                Icon(if (isRecording) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text(if (isRecording) "Pause" else "Record", maxLines = 1, softWrap = false)
-            }
-            PanelIcon(Icons.Default.Undo, "Undo last point", pathPoints.isNotEmpty()) { SurveyRepository.undoLastPathPoint() }
-            ExportButton(
-                pathPoints.isNotEmpty(), "path", SurveyRepository::exportPathGeoJson, onSave, onShare,
-                "Clear path", SurveyRepository::clearPath
-            )
-        }
-    }
-}
-
 // ---------------- Area ----------------
-private val featureCategories = listOf("Kerb/Edge", "Boundary", "Pit/Drain", "Power/Util", "Tree", "Sign/Post")
 
 @Composable
 fun AreaPanel(
@@ -176,9 +108,13 @@ fun AreaPanel(
     val areaSqM by SurveyRepository.polygonAreaSqMeters.collectAsState()
     val perimeterM by SurveyRepository.polygonPerimeterMeters.collectAsState()
 
-    var category by remember { mutableStateOf(featureCategories.first()) }
+    val types by FeatureTypes.types.collectAsState()
+    var chosen by remember { mutableStateOf<String?>(null) }
+    // Falls back to the first type (or a plain "Feature" when the list is empty)
+    val category = chosen?.takeIf { it in types } ?: types.firstOrNull() ?: "Feature"
     var note by remember { mutableStateOf("") }
     var showCategories by remember { mutableStateOf(false) }
+    var showTypeEditor by remember { mutableStateOf(false) }
     var showNoteDialog by remember { mutableStateOf(false) }
 
     PanelColumn {
@@ -202,9 +138,15 @@ fun AreaPanel(
                     Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                 }
                 DropdownMenu(expanded = showCategories, onDismissRequest = { showCategories = false }) {
-                    featureCategories.forEach { cat ->
-                        DropdownMenuItem(text = { Text(cat) }, onClick = { category = cat; showCategories = false })
+                    types.forEach { cat ->
+                        DropdownMenuItem(text = { Text(cat) }, onClick = { chosen = cat; showCategories = false })
                     }
+                    if (types.isNotEmpty()) HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Edit feature types…") },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = { showCategories = false; showTypeEditor = true }
+                    )
                 }
             }
             if (note.isBlank()) {
@@ -233,6 +175,8 @@ fun AreaPanel(
             )
         }
     }
+
+    if (showTypeEditor) FeatureTypesDialog(onDismiss = { showTypeEditor = false })
 
     if (showNoteDialog) {
         var draft by remember { mutableStateOf(note) }
@@ -348,6 +292,54 @@ fun SettingsDialog(
                         Text("Adds Δh and slope distance. GNSS height is uncorrected, not AHD.", fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
                     }
                     Switch(checked = measure.recordHeight, onCheckedChange = { on -> MeasureRepository.updateSettings { it.copy(recordHeight = on) } })
+                }
+            }
+        }
+    )
+}
+
+/** Add / delete feature types; every default can be removed. */
+@Composable
+fun FeatureTypesDialog(onDismiss: () -> Unit) {
+    val types by FeatureTypes.types.collectAsState()
+    var newType by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Feature types") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { FeatureTypes.restoreDefaults() }) { Text("Restore defaults") }
+                TextButton(onClick = { FeatureTypes.clearAll() }, enabled = types.isNotEmpty()) {
+                    Text("Clear all", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(
+                        value = newType,
+                        onValueChange = { newType = it },
+                        singleLine = true,
+                        placeholder = { Text("New type") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilledTonalIconButton(onClick = { FeatureTypes.add(newType); newType = "" }, enabled = newType.isNotBlank()) {
+                        Icon(Icons.Default.Add, contentDescription = "Add type")
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                if (types.isEmpty()) {
+                    Text("No types: points are logged as \"Feature\".", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                types.forEach { t ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(t, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { FeatureTypes.remove(t) }) {
+                            Icon(Icons.Default.Close, contentDescription = "Remove $t")
+                        }
+                    }
                 }
             }
         }

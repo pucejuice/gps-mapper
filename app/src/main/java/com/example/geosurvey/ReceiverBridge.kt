@@ -43,7 +43,7 @@ import java.util.UUID
 
 /**
  * Built-in GNSS receiver bridge: reads NMEA from a receiver on USB (serial / CDC) or
- * Bluetooth (SPP), feeds the fixes straight into GeoSurvey, and — when GeoSurvey is
+ * Bluetooth (SPP), feeds the fixes straight into wayopps, and — when wayopps is
  * selected as the mock location app in Developer options — publishes them as the
  * phone's location so other apps use the receiver too.
  */
@@ -335,7 +335,7 @@ object ReceiverBridge {
             try { fused?.setMockMode(true) } catch (e: SecurityException) {}
             _mockStatus.value = MockStatus.PUBLISHING
         } catch (e: SecurityException) {
-            // GeoSurvey is not the selected mock location app
+            // wayopps is not the selected mock location app
             _mockStatus.value = MockStatus.NOT_ALLOWED
         } catch (e: IllegalArgumentException) {
             _mockStatus.value = MockStatus.NOT_ALLOWED
@@ -359,7 +359,7 @@ object ReceiverBridge {
         _mockStatus.value = MockStatus.OFF
     }
 
-    /** Try again after the user has selected GeoSurvey in Developer options. */
+    /** Try again after the user has selected wayopps in Developer options. */
     fun retryMock() {
         if (isConnected && _shareAsPhoneLocation.value) enableMock()
     }

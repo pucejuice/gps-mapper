@@ -56,7 +56,7 @@ class TrackingService : Service() {
         val notificationManager = getSystemService(NotificationManager::class.java)
         notificationManager.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "GNSS Tracking", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Shown while GeoSurvey is using GPS"
+                description = "Shown while wayopps is using GPS"
             }
         )
         startForeground(NOTIFICATION_ID, buildNotification(BackgroundTask.IDLE))
@@ -95,7 +95,7 @@ class TrackingService : Service() {
     }
 
     private fun buildNotification(task: BackgroundTask) = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle(if (task == BackgroundTask.IDLE) "GeoSurvey is using GPS" else "GeoSurvey: ${task.label}")
+        .setContentTitle(if (task == BackgroundTask.IDLE) "wayopps is using GPS" else "wayopps: ${task.label}")
         .setContentText(
             if (task == BackgroundTask.IDLE) "Stops when you leave the app"
             else "GPS stays on in the background until you stop"

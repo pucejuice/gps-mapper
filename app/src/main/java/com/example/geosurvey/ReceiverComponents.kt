@@ -120,7 +120,7 @@ fun ReceiverDialog(onDismiss: () -> Unit) {
                     }
                     is ReceiverBridge.State.Failed -> Text(s.message, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                     ReceiverBridge.State.Disconnected -> Text(
-                        "Connect a GNSS receiver to use its positions in GeoSurvey (and, optionally, as the phone's location for other apps).",
+                        "Connect a GNSS receiver to use its positions in wayopps (and, optionally, as the phone's location for other apps).",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -134,7 +134,7 @@ fun ReceiverDialog(onDismiss: () -> Unit) {
                         Text(
                             when (mock) {
                                 ReceiverBridge.MockStatus.PUBLISHING -> "Other apps now get the receiver's position"
-                                ReceiverBridge.MockStatus.NOT_ALLOWED -> "Needs GeoSurvey as the mock location app"
+                                ReceiverBridge.MockStatus.NOT_ALLOWED -> "Needs wayopps as the mock location app"
                                 ReceiverBridge.MockStatus.OFF -> "Mock location for other apps"
                             },
                             fontSize = 11.sp,
@@ -145,7 +145,7 @@ fun ReceiverDialog(onDismiss: () -> Unit) {
                 }
                 if (mock == ReceiverBridge.MockStatus.NOT_ALLOWED) {
                     Text(
-                        "Developer options › Select mock location app › GeoSurvey. (Enable Developer options by tapping " +
+                        "Developer options › Select mock location app › wayopps. (Enable Developer options by tapping " +
                             "Build number 7 times in About phone.) Only one app can hold this — it replaces the Quescan bridge.",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -193,7 +193,7 @@ fun ReceiverDialog(onDismiss: () -> Unit) {
                         val devices = remember(refresh) { ReceiverBridge.usbCandidates(context) }
                         if (devices.isEmpty()) {
                             Text(
-                                "No USB serial device found. Plug the receiver in with a USB-C OTG cable; Android may ask to open GeoSurvey.",
+                                "No USB serial device found. Plug the receiver in with a USB-C OTG cable; Android may ask to open wayopps.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

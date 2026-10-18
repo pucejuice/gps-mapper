@@ -30,30 +30,41 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
 
-    private var pendingGeoJsonToSave: String = ""
+    private var pendingFileToSave: String = ""
 
-    private val saveFileLauncher = registerForActivityResult(
-        ActivityResultContracts.CreateDocument("application/geo+json")
-    ) { uri: Uri? ->
-        if (uri != null && pendingGeoJsonToSave.isNotEmpty()) {
-            try {
-                contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(pendingGeoJsonToSave.toByteArray(Charsets.UTF_8))
-                }
-                Toast.makeText(this, "GeoJSON saved to device!", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
-            }
+    private fun writePending(uri: Uri?) {
+        if (uri == null || pendingFileToSave.isEmpty()) return
+        try {
+            contentResolver.openOutputStream(uri)?.use { out -> out.write(pendingFileToSave.toByteArray(Charsets.UTF_8)) }
+            Toast.makeText(this, "Saved to device", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Save failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private val saveGeoJsonLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/geo+json")
+    ) { writePending(it) }
+
+    private val saveGpxLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/gpx+xml")
+    ) { writePending(it) }
+
+    /** Save [content] via the system file picker; the extension of [fileName] picks the type. */
+    private fun saveFile(content: String, fileName: String) {
+        pendingFileToSave = content
+        if (fileName.endsWith(".gpx")) saveGpxLauncher.launch(fileName) else saveGeoJsonLauncher.launch(fileName)
     }
 
     private val importFileLauncher = registerForActivityResult(
@@ -78,6 +89,9 @@ class MainActivity : ComponentActivity() {
         val settings = getSharedPreferences("geosurvey_settings", MODE_PRIVATE)
         MeasureRepository.attach(this)
         ReceiverBridge.attach(this)
+        FeatureTypes.attach(this)
+        AlertEngine.attach(this)
+        HistoryRepository.attach(this, SurveyRepository.currentActivityId.value)
         handleUsbAttach(intent)
         setContent {
             var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", true)) }
@@ -103,11 +117,8 @@ class MainActivity : ComponentActivity() {
                         settings.edit().putString("map_style", style.name).apply()
                     },
                     onStartService = { startTrackingService() },
-                    onSaveGeoJson = { json, fileName ->
-                        pendingGeoJsonToSave = json
-                        saveFileLauncher.launch(fileName)
-                    },
-                    onShareGeoJson = { json, title -> shareGeoJson(json, title) },
+                    onSaveGeoJson = { content, fileName -> saveFile(content, fileName) },
+                    onShareGeoJson = { content, fileName -> shareFile(content, fileName) },
                     onImportGeoJson = { importFileLauncher.launch("*/*") }
                 )
             }
@@ -149,15 +160,24 @@ class MainActivity : ComponentActivity() {
         if (granted && SurveyRepository.appVisible.value) TrackingService.start(this)
     }
 
-    private fun shareGeoJson(content: String, title: String) {
-        val sendIntent = Intent().apply {
-            action = Intent.ACTION_SEND
-            putExtra(Intent.EXTRA_TEXT, content)
-            putExtra(Intent.EXTRA_SUBJECT, title)
-            type = "application/geo+json"
+    /** Shares [content] as a real file (cache/exports/[fileName]) so other apps can open it. */
+    private fun shareFile(content: String, fileName: String) {
+        try {
+            val dir = java.io.File(cacheDir, "exports").apply { mkdirs() }
+            val file = java.io.File(dir, fileName.replace(Regex("[^A-Za-z0-9._-]"), "_"))
+            file.writeText(content)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val mime = if (fileName.endsWith(".gpx")) "application/gpx+xml" else "application/geo+json"
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, fileName)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(sendIntent, "Share $fileName"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "Share failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
-        val shareIntent = Intent.createChooser(sendIntent, "Share $title")
-        startActivity(shareIntent)
     }
 }
 
@@ -222,6 +242,8 @@ fun MainScreen(
     var showSettings by remember { mutableStateOf(false) }
     var showRecords by remember { mutableStateOf(false) }
     var showReceiver by remember { mutableStateOf(false) }
+    var showAlerts by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
     val receiverQuality by SurveyRepository.receiverQuality.collectAsState()
 
     // Status bar matches the Voronoi top bar; navigation bar matches the bottom panel
@@ -255,6 +277,8 @@ fun MainScreen(
     occupation?.let { OccupationOverlay(it) }
     if (showRecords) RecordsSheet(onDismiss = { showRecords = false })
     if (showReceiver) ReceiverDialog(onDismiss = { showReceiver = false })
+    if (showAlerts) AlertsDialog(onDismiss = { showAlerts = false })
+    if (showHistory) HistorySheet(onDismiss = { showHistory = false }, onSave = onSaveGeoJson, onShare = onShareGeoJson)
 
     if (showSettings) {
         SettingsDialog(
@@ -270,13 +294,22 @@ fun MainScreen(
             VoronoiBackground(modifier = Modifier.matchParentSize(), seed = 5, cellSizePx = 150f, scrim = Color(0x590A0D10))
             TopAppBar(
                 title = {
-                    Text(
-                        "GeoSurvey",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            painterResource(R.drawable.ic_logo),
+                            contentDescription = null,
+                            tint = Sla.text,
+                            modifier = Modifier.size(width = 20.dp, height = 25.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "wayopps",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
@@ -336,6 +369,14 @@ fun MainScreen(
                                     }
                                 )
                             }
+                            DropdownMenuItem(
+                                text = { Text("History") },
+                                leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    showHistory = true
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("GNSS receiver") },
                                 leadingIcon = { Icon(Icons.Default.SatelliteAlt, contentDescription = null) },
@@ -416,7 +457,7 @@ fun MainScreen(
             ) {
                 Column {
                     when (selectedTab) {
-                        0 -> PathPanel(curLocation, onSaveGeoJson, onShareGeoJson)
+                        0 -> PathPanel(curLocation, { showAlerts = true }, onSaveGeoJson, onShareGeoJson)
                         1 -> MeasurePanel(curLocation, { showRecords = true }, onSaveGeoJson, onShareGeoJson)
                         2 -> AreaPanel(curLocation, onSaveGeoJson, onShareGeoJson)
                         3 -> FollowPanel(importedOverlay, followSession, curLocation, onImportGeoJson)

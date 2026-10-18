@@ -53,6 +53,17 @@ object SurveyRepository {
     private val _totalDistanceMeters = MutableStateFlow(0.0)
     val totalDistanceMeters = _totalDistanceMeters.asStateFlow()
 
+    /** History row for the recording in progress (null when nothing is recorded yet). */
+    private val _currentActivityId = MutableStateFlow<Long?>(null)
+    val currentActivityId = _currentActivityId.asStateFlow()
+
+    // Moving time = sum of the recorded (not paused) stretches
+    private var movingAccumulatedMs = 0L
+    private var activeSinceMs: Long? = null
+
+    fun movingTimeMs(now: Long = System.currentTimeMillis()): Long =
+        movingAccumulatedMs + (activeSinceMs?.let { now - it } ?: 0L)
+
     private val _maxAccuracyFilterMeters = MutableStateFlow(10.0f)
     val maxAccuracyFilterMeters = _maxAccuracyFilterMeters.asStateFlow()
 
@@ -148,8 +159,16 @@ object SurveyRepository {
             val current = _pathPoints.value
             when (val d = PathRecording.evaluate(current.lastOrNull(), fix, _maxAccuracyFilterMeters.value.toDouble())) {
                 is TrackDecision.Accept -> {
-                    _totalDistanceMeters.value += d.addedMeters
-                    _pathPoints.value = current + fix
+                    val prevTotal = _totalDistanceMeters.value
+                    val updated = current + fix
+                    _totalDistanceMeters.value = prevTotal + d.addedMeters
+                    _pathPoints.value = updated
+                    _currentActivityId.value?.let { id ->
+                        HistoryRepository.appendPoint(id, updated.size - 1, fix)
+                        // Keep running totals saved in case the app is killed mid-recording
+                        if (updated.size % 15 == 0) HistoryRepository.update(id, _totalDistanceMeters.value, movingTimeMs())
+                    }
+                    AlertEngine.onProgress(prevTotal, _totalDistanceMeters.value, updated, movingTimeMs())
                 }
                 TrackDecision.RejectAccuracy -> _pathRejectedFixes.value += 1
                 TrackDecision.TooClose -> {}
@@ -172,13 +191,65 @@ object SurveyRepository {
         _maxAccuracyFilterMeters.value = maxMeters
     }
 
+    /** Start a new recording, or resume a paused one. */
     fun startPathRecording() {
+        if (_isRecordingPath.value) return
+        val now = System.currentTimeMillis()
+        if (_currentActivityId.value == null) {
+            _pathPoints.value = emptyList()
+            _totalDistanceMeters.value = 0.0
+            movingAccumulatedMs = 0L
+            AlertEngine.reset()
+            _currentActivityId.value = HistoryRepository.begin(HistoryRepository.activityType.value, now)
+        }
         _pathRejectedFixes.value = 0
+        activeSinceMs = now
         _isRecordingPath.value = true
     }
 
+    /** Pause (the recording stays open and can be resumed or finished). */
     fun stopPathRecording() {
+        if (!_isRecordingPath.value) return
+        activeSinceMs?.let { movingAccumulatedMs += System.currentTimeMillis() - it }
+        activeSinceMs = null
         _isRecordingPath.value = false
+        _currentActivityId.value?.let { HistoryRepository.update(it, _totalDistanceMeters.value, movingAccumulatedMs) }
+    }
+
+    /** Finish: save to History and clear the map. Returns a short summary, or null if nothing was recorded. */
+    fun finishRecording(): String? {
+        stopPathRecording()
+        val id = _currentActivityId.value ?: return null
+        val pts = _pathPoints.value
+        val summary = if (pts.size >= 2) {
+            HistoryRepository.update(id, _totalDistanceMeters.value, movingAccumulatedMs, endedAt = pts.last().t)
+            "Saved to History · ${AlertEngine.formatKm(_totalDistanceMeters.value)} in ${formatDuration(movingAccumulatedMs)}"
+        } else {
+            HistoryRepository.delete(id)
+            null
+        }
+        resetPath()
+        return summary
+    }
+
+    private fun resetPath() {
+        _currentActivityId.value = null
+        _isRecordingPath.value = false
+        activeSinceMs = null
+        movingAccumulatedMs = 0L
+        _pathPoints.value = emptyList()
+        _totalDistanceMeters.value = 0.0
+        AlertEngine.reset()
+    }
+
+    /** Load a saved activity onto the map as an overlay (it can then be followed). */
+    fun showActivityOnMap(name: String, points: List<TrackPoint>) {
+        stopFollowing()
+        _importedOverlay.value = ImportedGeoJsonOverlay(
+            fileName = name,
+            lines = listOf(ImportedLine(name, points.map { LatLon(it.lat, it.lon) })),
+            points = emptyList()
+        )
     }
 
     fun undoLastPathPoint() {
@@ -189,16 +260,18 @@ object SurveyRepository {
             val delta = Geodesy.groundDistance(prev.lat, prev.lon, last.lat, last.lon)
             _totalDistanceMeters.value = (_totalDistanceMeters.value - delta).coerceAtLeast(0.0)
             _pathPoints.value = current.dropLast(1)
+            _currentActivityId.value?.let { HistoryRepository.deleteLastPoint(it) }
         } else if (current.size == 1) {
+            _currentActivityId.value?.let { HistoryRepository.deleteLastPoint(it) }
             _pathPoints.value = emptyList()
             _totalDistanceMeters.value = 0.0
         }
     }
 
+    /** Discard the current recording (not saved to History). */
     fun clearPath() {
-        _isRecordingPath.value = false
-        _pathPoints.value = emptyList()
-        _totalDistanceMeters.value = 0.0
+        _currentActivityId.value?.let { HistoryRepository.delete(it) }
+        resetPath()
     }
 
     // --- Feature & Area Survey Controls ---

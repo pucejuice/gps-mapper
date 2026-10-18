@@ -72,7 +72,7 @@ fun OsmMapView(
         Configuration.getInstance().load(context, prefs)
         // Tile servers (OSM in particular) reject generic/example User-Agents with HTTP 403
         Configuration.getInstance().userAgentValue =
-            "GeoSurveyGNSS/${BuildConfig.VERSION_NAME} (Android; +https://github.com/pucejuice/gps-mapper)"
+            "wayopps/${BuildConfig.VERSION_NAME} (Android; +https://github.com/pucejuice/gps-mapper)"
 
         // One-off purge of "Access blocked" tiles cached while the old User-Agent was in use
         if (!prefs.getBoolean("purged_blocked_tiles_v1", false)) {

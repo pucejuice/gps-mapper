@@ -1,16 +1,15 @@
-# GeoSurvey GNSS (Android)
+# wayopps (Android)
 
-A GNSS survey, path recording, distance measurement and path-following app for Android, built for use with external high-accuracy GNSS receivers (such as Quescan) via Mock Location.
+A mapping, activity recording, distance measurement and path-following app for Android, built for use with external high-accuracy GNSS receivers (such as Quescan) via Mock Location.
 
 ## Modes & Features
 
-1. **Path** – record a track
-   - Continuous background GNSS logging via an Android `ForegroundService` (keeps recording with the screen locked).
-   - **GPS is released when you leave the app** unless a path recording, path following or station hold is running. While one is, a notification shows what is using GPS, with a **Stop GPS** button.
-   - Live cumulative distance (m / km), logged point counter, elevation, and ground speed (km/h).
-   - Selectable **Accuracy Gate** (≤0.5 m RTK, ≤2, ≤5, ≤10 (default) or ≤25 m) in Settings to reject multipath outliers. A status line shows the live fix accuracy and warns when fixes are being skipped by the gate.
-   - The recorded path draws live on the map, with a dashed tail from the last logged point to your position. A point is logged once you move more than ~0.4× the fix accuracy (min 0.5 m), so standing still doesn't add jitter distance.
-   - **Undo Last Point**, **Pause/Resume**, and direct `.geojson` saving or sharing.
+1. **Path** – record runs, rides, walks and hikes
+   - Pick the activity type, then **Start / Pause / Resume** and **Finish** (⚑) to save it to **History**. Recording continues with the screen locked.
+   - Live distance, moving time, pace (rolling, last 30 s) and speed; the path draws on the map as you go.
+   - Selectable **Accuracy Gate** (≤0.5 / 2 / 5 / 10 (default) / 25 m) in Settings, with a status line that warns when fixes are being skipped. A point is logged once you move more than ~0.4× the fix accuracy (min 0.5 m), so standing still doesn't add jitter distance.
+   - **Alerts** (🔔): any number of **distance alerts** — once (e.g. at 1 km) or repeating (every 1 km, every 500 m…) — each with its own system notification sound; and a **pace alert** with a target pace and separate *too slow* / *too fast* tolerances (5–20 %), each with its own sound, repeating every 30/60/120 s while out of range. Alerts play the sound, vibrate and post a notification.
+   - **History** (☰ › History): every finished activity is stored in an on-device SQLite database, written point by point while recording (so a run survives the app being closed). Choose how long to keep them (7 / 30 / 90 days, 1 year, forever); older ones are deleted automatically. Show on the map (and follow it), export **GPX** (Strava/Garmin/QGIS) or GeoJSON, rename, delete, or share everything as one GPX.
 
 2. **Measure** – multi-station straight line measuring (same workflow and maths as the [SLA web app](https://github.com/pucejuice/sla))
    - **＋ Station** opens a full-screen hold: the phone is held still for the hold time (default 30 s) split into epochs (default 4). Every fix better than the gate (default ±15 m) is averaged, weighted 1/accuracy²; the quoted **±spread** is the DRMS of the epoch means, which sees GNSS bias that fix-to-fix scatter does not.
@@ -23,9 +22,8 @@ A GNSS survey, path recording, distance measurement and path-following app for A
    - Records are kept on the phone and survive closing the app. Export writes stations (Point) and `measured_line` features (2-point LineString) with distance, uncertainty, bearing and method.
 
 3. **Area** – feature & area survey
-   - One-tap point feature logging with preset tags (`Kerb/Edge`, `Boundary`, `Pit/Drain`, `Power/Util`, `Tree`, `Sign/Post`) and custom notes.
-   - Real-time polygon **area** (m² / ha) and **perimeter** using a local tangent plane (ENU) projection.
-   - Exports tagged `Point` features and the closed `Polygon` boundary in one GeoJSON `FeatureCollection`.
+   - One-tap point logging with a feature type and optional note. Types are a generic mapping list (Point of interest, Landmark, Viewpoint, Junction, Gate, Bridge, Water, Tree, Building, Sign, Parking, Hazard) that you can add to, delete from or clear entirely (*Edit feature types…*).
+   - Real-time polygon **area** (m² / ha) and **perimeter** using a local tangent plane (ENU) projection; exports points and the closed polygon as GeoJSON.
 
 4. **Follow** – navigate along a loaded GeoJSON path
    - Load a `.geojson` (folder button, top bar) containing a `LineString`, `MultiLineString` or polygon.
@@ -37,12 +35,12 @@ A GNSS survey, path recording, distance measurement and path-following app for A
    - Handles out-and-back and looping routes by keeping track of progress along the path.
 
 5. **GNSS receiver bridge** (☰ › GNSS receiver, or tap the status badge)
-   - Connects to an external receiver by **USB cable** (CDC-ACM, FTDI, CP210x, CH34x, PL2303 — via an OTG cable; plugging it in offers to open GeoSurvey and connects automatically) or **Bluetooth** (paired SPP receivers).
+   - Connects to an external receiver by **USB cable** (CDC-ACM, FTDI, CP210x, CH34x, PL2303 — via an OTG cable; plugging it in offers to open wayopps and connects automatically) or **Bluetooth** (paired SPP receivers).
    - Reads NMEA **GGA** (position, fix type, satellites, HDOP, MSL height + geoid separation), **RMC** (speed, course) and **GST** (position standard deviations → accuracy; otherwise estimated from HDOP and fix type). Checksums are verified.
-   - Receiver fixes go straight into GeoSurvey (badge shows **RTK / FLOAT / DGPS / GNSS** ±accuracy); phone GPS is ignored while the receiver is feeding.
-   - **Share as phone location**: select GeoSurvey in *Developer options › Select mock location app* and the receiver's position is published as the phone's location (GPS test provider + fused provider), so other apps use it too. Only one app can be the mock location app, so this replaces a separate bridge app.
+   - Receiver fixes go straight into wayopps (badge shows **RTK / FLOAT / DGPS / GNSS** ±accuracy); phone GPS is ignored while the receiver is feeding.
+   - **Share as phone location**: select wayopps in *Developer options › Select mock location app* and the receiver's position is published as the phone's location (GPS test provider + fused provider), so other apps use it too. Only one app can be the mock location app, so this replaces a separate bridge app.
    - While connected, the receiver keeps running in the background (notification with **Stop GPS**).
-   - RTK corrections are not handled by GeoSurvey (no NTRIP client yet): the receiver needs its own correction source to reach RTK fixed.
+   - RTK corrections are not handled by wayopps (no NTRIP client yet): the receiver needs its own correction source to reach RTK fixed.
 
 6. **Field & Map Utilities**
    - **GNSS status badge:** `EXT` for external (mock) receiver coordinates or `GPS` for the phone's own GPS, with horizontal accuracy, coloured green (RTK) / blue (sub-metre) / orange / red.
@@ -54,6 +52,6 @@ A GNSS survey, path recording, distance measurement and path-following app for A
 
 ## Build
 
-GitHub Actions (`.github/workflows/build.yml`) runs the unit tests and builds a debug APK on every push (or manually via `workflow_dispatch`). Download the `GeoSurvey-Debug-APK` artifact from the workflow run and install `app-debug.apk` on the phone (allow installs from unknown sources).
+GitHub Actions (`.github/workflows/build.yml`) runs the unit tests and builds a debug APK on every push (or manually via `workflow_dispatch`). Download the `wayopps-debug-apk` artifact from the workflow run and install `app-debug.apk` on the phone (allow installs from unknown sources).
 
 Locally: `gradle testDebugUnitTest assembleDebug` with JDK 17 and the Android SDK.
