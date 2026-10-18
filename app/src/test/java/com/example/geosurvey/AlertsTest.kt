@@ -113,3 +113,36 @@ class AlertsTest {
         assertEquals(12.0, a.avgKmh!!, 1e-9)
     }
 }
+
+class PaceWindowTest {
+    private fun track(speedMps: Double, seconds: Int): List<TrackPoint> =
+        (0..seconds).map { s ->
+            val (lat, lon) = Geodesy.fromEN(0.0, s * speedMps, -26.7, 153.1)
+            TrackPoint(lat, lon, null, 3.0, s * 1000L)
+        }
+
+    @Test
+    fun everyWindowOptionGivesAWalkingPace() {
+        // Brisk walk, 1.4 m/s = 11:54 /km, logged once a second
+        for (w in PACE_WINDOWS_FOR_TEST) {
+            val p = Pace.rollingSecPerKm(track(1.4, 200), w)
+            org.junit.Assert.assertNotNull("window $w", p)
+            org.junit.Assert.assertEquals(1000 / 1.4, p!!, 1.0)
+        }
+    }
+
+    @Test
+    fun windowOnlyUsesRecentPoints() {
+        // 60 s slow (2 m/s) then 30 s fast (4 m/s): a 20 s window sees only the fast part.
+        val slow = track(2.0, 60)
+        val last = slow.last()
+        val fast = (1..30).map { s ->
+            val (lat, lon) = Geodesy.fromEN(0.0, 120.0 + s * 4.0, -26.7, 153.1)
+            TrackPoint(lat, lon, null, 3.0, last.t + s * 1000L)
+        }
+        org.junit.Assert.assertEquals(250.0, Pace.rollingSecPerKm(slow + fast, 20)!!, 0.5)
+        org.junit.Assert.assertTrue(Pace.rollingSecPerKm(slow + fast, 120)!! > 300.0)
+    }
+
+    private val PACE_WINDOWS_FOR_TEST = listOf(10, 20, 30, 60, 120)
+}

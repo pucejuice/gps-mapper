@@ -290,7 +290,7 @@ fun AlertsDialog(onDismiss: () -> Unit) {
                 PctRow("Too slow", "+", pace.slowTolerancePct) { AlertEngine.savePace(pace.copy(slowTolerancePct = it)) }
                 PctRow("Too fast", "−", pace.fastTolerancePct) { AlertEngine.savePace(pace.copy(fastTolerancePct = it)) }
                 Text(
-                    "Range ${Pace.format(pace.fastLimit)} – ${Pace.format(pace.slowLimit)} /km (pace over the last ${pace.windowS} s). " +
+                    "Range ${Pace.format(pace.fastLimit)} – ${Pace.format(pace.slowLimit)} /km (pace over the last ${pace.windowS} s — change in Settings). " +
                         "Alerts when you leave the range, then every ${pace.repeatS} s until you're back in it.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -6,7 +6,7 @@ A mapping, activity recording, distance measurement and path-following app for A
 
 1. **Path** – record runs, rides, walks and hikes
    - Pick the activity type, then **Start / Pause / Resume** and **Finish** (⚑) to save it to **History**. Recording continues with the screen locked.
-   - Live distance, moving time, pace (rolling, last 30 s) and speed; the path draws on the map as you go.
+   - Live distance, moving time, pace and speed; the path draws on the map as you go. Pace is your average over a trailing window set in **Settings › Pace measurement** (10 s, 20 s, 30 s (default), 1 min or 2 min) and the same window drives the pace alerts.
    - Selectable **Accuracy Gate** (≤0.5 / 2 / 5 / 10 (default) / 25 m) in Settings, with a status line that warns when fixes are being skipped. A point is logged once you move more than ~0.4× the fix accuracy (min 0.5 m), so standing still doesn't add jitter distance.
    - **Alerts** (🔔): any number of **distance alerts** — once (e.g. at 1 km) or repeating (every 1 km, every 500 m…) — each with its own system notification sound; and a **pace alert** with a target pace and separate *too slow* / *too fast* tolerances (5–20 %), each with its own sound, repeating every 30/60/120 s while out of range. Alerts play the sound, vibrate and post a notification.
    - **History** (☰ › History): every finished activity is stored in an on-device SQLite database, written point by point while recording (so a run survives the app being closed). Choose how long to keep them (7 / 30 / 90 days, 1 year, forever); older ones are deleted automatically. Show on the map (and follow it), export **GPX** (Strava/Garmin/QGIS) or GeoJSON, rename, delete, or share everything as one GPX.

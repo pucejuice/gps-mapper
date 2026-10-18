@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 
 // Compact bottom panels: each mode fits in ~2 rows so the map keeps most of the screen.
 
+val PACE_WINDOWS = listOf(10, 20, 30, 60, 120)
 val accuracyGates = listOf(0.5f to "≤0.5 m (RTK)", 2.0f to "≤2 m", 5.0f to "≤5 m", 10.0f to "≤10 m", 25.0f to "≤25 m (any)")
 
 fun formatMeters(m: Double): String =
@@ -243,6 +244,7 @@ fun SettingsDialog(
 ) {
     val accuracyGate by SurveyRepository.maxAccuracyFilterMeters.collectAsState()
     val measure by MeasureRepository.settings.collectAsState()
+    val pace by AlertEngine.pace.collectAsState()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -266,6 +268,18 @@ fun SettingsDialog(
                 accuracyGates.forEach { (gate, label) ->
                     RadioRow(label, accuracyGate == gate) { SurveyRepository.setAccuracyFilter(gate) }
                 }
+
+                SectionLabel("Pace measurement (Path)")
+                ChipRow("Over", PACE_WINDOWS, pace.windowS, { if (it >= 60) "${it / 60} min" else "$it s" }) { v ->
+                    AlertEngine.savePace(AlertEngine.pace.value.copy(windowS = v))
+                }
+                Text(
+                    "Live pace (and pace alerts) use your average over the last ${pace.windowS} s. " +
+                        "Shorter reacts faster but jumps around more with GPS noise; longer is steadier.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
 
                 SectionLabel("Station occupation (Measure)")
                 ChipRow("Hold", listOf(10, 30, 60, 120), measure.dwellS, { "$it s" }) { v -> MeasureRepository.updateSettings { it.copy(dwellS = v) } }

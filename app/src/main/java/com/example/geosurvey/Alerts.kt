@@ -29,7 +29,7 @@ data class PaceAlertSettings(
     val fastSoundTitle: String = "Default",
     /** While still outside the range, alert again after this many seconds. */
     val repeatS: Int = 60,
-    /** Pace is averaged over this trailing window. */
+    /** Pace is averaged over this trailing window (Settings › Pace measurement). */
     val windowS: Int = 30
 ) {
     /** Slowest acceptable pace, s/km (a larger number is slower). */
@@ -68,7 +68,13 @@ object Pace {
      * Pace over the trailing [windowS] seconds of [points], seconds per km, or null when
      * there isn't enough movement to say (under [minDistM] or [minTimeS] in the window).
      */
-    fun rollingSecPerKm(points: List<TrackPoint>, windowS: Int, minDistM: Double = 15.0, minTimeS: Double = 8.0): Double? {
+    fun rollingSecPerKm(
+        points: List<TrackPoint>,
+        windowS: Int,
+        // Shorter windows accept less movement so they still give a reading
+        minDistM: Double = minOf(15.0, windowS * 0.5),
+        minTimeS: Double = minOf(8.0, windowS * 0.6)
+    ): Double? {
         if (points.size < 2) return null
         val end = points.last()
         val startT = end.t - windowS * 1000L
