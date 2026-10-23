@@ -40,6 +40,10 @@ object AlertEngine {
     private val _currentPace = MutableStateFlow<Double?>(null)
     val currentPace = _currentPace.asStateFlow()
 
+    /** Fastest speed this recording, km/h, from the smoothed (pace-window) track speed so GPS spikes don't count. */
+    private val _maxKmh = MutableStateFlow<Double?>(null)
+    val maxKmh = _maxKmh.asStateFlow()
+
     private val paceMonitor = PaceMonitor()
     private var appContext: Context? = null
     private var playing: Ringtone? = null
@@ -120,12 +124,14 @@ object AlertEngine {
     fun reset() {
         paceMonitor.reset()
         _currentPace.value = null
+        _maxKmh.value = null
     }
 
     /** Called with each newly logged point while recording. */
     fun onProgress(prevTotalM: Double, totalM: Double, points: List<TrackPoint>, movingMs: Long) {
         val pace = Pace.rollingSecPerKm(points, _pace.value.windowS)
         _currentPace.value = pace
+        Speed.fromPaceKmh(pace)?.let { v -> if (v > (_maxKmh.value ?: 0.0)) _maxKmh.value = v }
 
         for ((alert, mark) in DistanceAlerts.crossed(_distanceAlerts.value, prevTotalM, totalM)) {
             val avg = if (totalM > 0) (movingMs / 1000.0) / (totalM / 1000.0) else null

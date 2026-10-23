@@ -146,3 +146,27 @@ class PaceWindowTest {
 
     private val PACE_WINDOWS_FOR_TEST = listOf(10, 20, 30, 60, 120)
 }
+
+class SpeedTest {
+    @Test
+    fun conversions() {
+        org.junit.Assert.assertEquals(36.0, Speed.kmh(10.0), 1e-9)
+        org.junit.Assert.assertEquals(12.0, Speed.fromPaceKmh(300.0)!!, 1e-9)   // 5:00 /km = 12 km/h
+        org.junit.Assert.assertNull(Speed.fromPaceKmh(null))
+    }
+
+    @Test
+    fun averageUsesMovingTime() {
+        // 10 km in 50 min moving = 12 km/h
+        org.junit.Assert.assertEquals(12.0, Speed.averageKmh(10_000.0, 50 * 60_000L)!!, 1e-9)
+        org.junit.Assert.assertNull(Speed.averageKmh(0.0, 60_000))
+        org.junit.Assert.assertNull(Speed.averageKmh(100.0, 0))
+    }
+
+    @Test
+    fun currentPrefersFixSpeedThenTrack() {
+        org.junit.Assert.assertEquals(18.0, Speed.currentKmh(true, 5.0, 9.0)!!, 1e-9)
+        org.junit.Assert.assertEquals(9.0, Speed.currentKmh(false, 0.0, 9.0)!!, 1e-9) // no Doppler speed: don't show 0
+        org.junit.Assert.assertNull(Speed.currentKmh(false, null, null))
+    }
+}

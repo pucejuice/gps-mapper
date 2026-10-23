@@ -157,3 +157,21 @@ fun formatDuration(ms: Long): String {
     val s = total % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
+
+object Speed {
+    fun kmh(mps: Double): Double = mps * 3.6
+
+    /** Speed equivalent of a pace (s/km -> km/h). */
+    fun fromPaceKmh(secPerKm: Double?): Double? = secPerKm?.takeIf { it > 0 }?.let { 3600.0 / it }
+
+    /** Average moving speed: distance travelled / moving time (pauses excluded). */
+    fun averageKmh(distanceM: Double, movingMs: Long): Double? =
+        if (movingMs < 1000 || distanceM < 1) null else (distanceM / 1000.0) / (movingMs / 3_600_000.0)
+
+    /**
+     * Current speed: the receiver's own (Doppler) speed when the fix carries one, which is
+     * instantaneous and doesn't lag; otherwise the speed over the recent track ([trackKmh]).
+     */
+    fun currentKmh(fixHasSpeed: Boolean, fixSpeedMps: Double?, trackKmh: Double?): Double? =
+        if (fixHasSpeed && fixSpeedMps != null && fixSpeedMps >= 0) kmh(fixSpeedMps) else trackKmh
+}

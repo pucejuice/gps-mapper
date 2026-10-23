@@ -62,6 +62,7 @@ fun PathPanel(
     val course by SurveyRepository.activeCourse.collectAsState()
     val courses by HistoryRepository.courses.collectAsState()
     val pace by AlertEngine.currentPace.collectAsState()
+    val maxKmh by AlertEngine.maxKmh.collectAsState()
     val distanceAlerts by AlertEngine.distanceAlerts.collectAsState()
     val paceSettings by AlertEngine.pace.collectAsState()
     val type by HistoryRepository.activityType.collectAsState()
@@ -111,7 +112,24 @@ fun PathPanel(
             Stat("Distance", formatMeters(totalDistance))
             Stat("Time", formatDuration(movingMs))
             Stat(if (isRecording) "Pace" else "Avg pace", "${Pace.format(if (isRecording) pace ?: avgPace else avgPace)} /km")
-            Stat("Speed", currentLocation?.speed?.let { "${"%.1f".format(it * 3.6f)} km/h" } ?: "--")
+            Stat(
+                "Speed now",
+                Speed.currentKmh(
+                    fixHasSpeed = currentLocation?.hasSpeed() == true,
+                    fixSpeedMps = currentLocation?.speed?.toDouble(),
+                    trackKmh = if (isRecording) Speed.fromPaceKmh(pace) else null
+                )?.let { "${"%.1f".format(it)} km/h" } ?: "--"
+            )
+        }
+        // Travelled (average) figures for the whole recording, moving time only
+        if (hasRecording && totalDistance >= 10) {
+            Text(
+                "Average ${Speed.averageKmh(totalDistance, movingMs)?.let { "%.1f".format(it) } ?: "--"} km/h · " +
+                    "${Pace.format(avgPace)} /km" +
+                    (maxKmh?.let { " · Max ${"%.1f".format(it)} km/h" } ?: ""),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         // Lap line: course timing, or manual laps
